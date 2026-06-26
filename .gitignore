@@ -1,0 +1,41 @@
+# dependencies
+node_modules/
+.npm-cache/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+!shared/dist/
+
+# runtime uploads (file storage)
+/uploads/
+!/uploads/.gitkeep
+
+# env
+.env
+.env.*
+!.env.example
+
+# prisma generated client
+server/node_modules/.prisma/
+server/src/generated/
+
+# logs
+*.log
+npm-debug.log*
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# test / coverage
+coverage/
+playwright-report/
+test-results/
+
+# vite cache
+.vite/
+node_modules/.vite/

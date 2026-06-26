@@ -1,0 +1,462 @@
+// Sports Auction Platform — Prisma schema (MySQL)
+// Decisions locked in Round 2:
+//   - Franchise users are GLOBAL identities, reused across auctions/seasons.
+//   - Auction state is PUBLIC (everyone sees all teams' credit + squads live).
+//   - Players are GLOBAL; bans are PER-LEAGUE (PlayerLeagueStatus).
+//   - Accounts are organizer-provisioned (invite -> franchise sets password).
+// All monetary amounts are Decimal(14,4) in CRORE units (so 0.5 = 50 lakh).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================ Enums ============================
+
+enum Role {
+  SUPER_ADMIN
+  ORGANIZER
+  FRANCHISE
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+enum Sport {
+  CRICKET
+  FOOTBALL
+  BASKETBALL
+  OTHER
+}
+
+enum AuctionStatus {
+  DRAFT
+  LIVE
+  PAUSED
+  RE_AUCTION
+  ASSIGNMENT
+  COMPLETED
+}
+
+enum BiddingMode {
+  ORGANIZER
+  FRANCHISE
+}
+
+enum AuctionRound {
+  MAIN
+  RE_AUCTION
+  ASSIGNMENT
+}
+
+enum LotStatus {
+  PENDING
+  ON_BLOCK
+  SOLD
+  UNSOLD
+  ASSIGNED
+}
+
+enum AcquisitionType {
+  AUCTION
+  REAUCTION
+  CHOSEN
+  FORCE_ASSIGNED
+}
+
+// Structured football position (lives on Player; only the GK slot is locked).
+enum FootballPosition {
+  GK
+  DEF
+  MID
+  FWD
+}
+
+enum LineupStatus {
+  DRAFT
+  LOCKED
+}
+
+enum LineupMembership {
+  STARTER // in the Playing XI
+  BENCH   // football substitute bench
+  RESERVE // squad member not in the matchday squad
+}
+
+// ========================== Identity ==========================
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  name         String
+  passwordHash String? // null until an invited user sets their password
+  role         Role
+  status       UserStatus @default(INVITED)
+  inviteToken  String?    @unique
+  invitedAt    DateTime?
+  activatedAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  // Who provisioned this account (SuperAdmin -> Organizer -> Franchise)
+  createdById     String?
+  createdBy       User?   @relation("AccountCreator", fields: [createdById], references: [id])
+  createdAccounts User[]  @relation("AccountCreator")
+
+  organizedLeagues League[]             @relation("LeagueOrganizer")
+  teams            Team[]               @relation("TeamOwner")
+  bids             Bid[]
+  bannedPlayers    PlayerLeagueStatus[] @relation("PlayerBannedBy")
+  lockedLineups    Lineup[]             @relation("LineupLockedBy")
+
+  @@index([role])
+  @@index([createdById])
+}
+
+// ======================= League / Season =======================
+
+model League {
+  id          String   @id @default(cuid())
+  name        String
+  sport       Sport
+  organizerId String
+  organizer   User     @relation("LeagueOrganizer", fields: [organizerId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  seasons        Season[]
+  playerStatuses PlayerLeagueStatus[]
+
+  @@index([organizerId])
+}
+
+model Season {
+  id        String    @id @default(cuid())
+  name      String
+  leagueId  String
+  league    League    @relation(fields: [leagueId], references: [id])
+  startDate DateTime?
+  endDate   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  auctions Auction[]
+
+  @@index([leagueId])
+}
+
+// =============== Players (global) + per-league status ===============
+
+model Player {
+  id          String    @id @default(cuid())
+  name        String
+  sport       Sport
+  role        String? // sport-specific, e.g. "Batter", "Striker"
+  nationality String?
+  dateOfBirth DateTime?
+  photoUrl    String?
+  externalRef String? // optional id from an external source
+  // Structured position used for football lineup validation (null for cricket;
+  // cricket roles are assigned at lineup time via LineupMember flags).
+  footballPosition FootballPosition?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  leagueStatuses PlayerLeagueStatus[]
+  auctionEntries AuctionPlayer[]
+  acquisitions   TeamPlayer[]
+
+  @@index([sport])
+}
+
+model PlayerLeagueStatus {
+  id           String    @id @default(cuid())
+  playerId     String
+  player       Player    @relation(fields: [playerId], references: [id])
+  leagueId     String
+  league       League    @relation(fields: [leagueId], references: [id])
+  banned       Boolean   @default(false)
+  bannedReason String?
+  bannedAt     DateTime?
+  bannedById   String?
+  bannedBy     User?     @relation("PlayerBannedBy", fields: [bannedById], references: [id])
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([playerId, leagueId])
+  @@index([leagueId, banned])
+}
+
+// ============================ Auction ============================
+
+model Auction {
+  id          String        @id @default(cuid())
+  name        String
+  seasonId    String
+  season      Season        @relation(fields: [seasonId], references: [id])
+  status      AuctionStatus @default(DRAFT)
+  biddingMode BiddingMode   @default(FRANCHISE)
+  round       AuctionRound  @default(MAIN)
+
+  // Live state
+  currentAuctionPlayerId String?        @unique
+  currentAuctionPlayer   AuctionPlayer? @relation("CurrentLot", fields: [currentAuctionPlayerId], references: [id])
+  currentLotEndsAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rules          AuctionRules?
+  incrementTiers BidIncrementTier[]
+  teams          Team[]
+  auctionPlayers AuctionPlayer[]    @relation("AuctionLots")
+  bids           Bid[]
+  lineupRules       LineupRules?
+  allowedFormations AuctionAllowedFormation[]
+
+  @@index([seasonId])
+  @@index([status])
+}
+
+model AuctionRules {
+  id                    String  @id @default(cuid())
+  auctionId             String  @unique
+  auction               Auction @relation(fields: [auctionId], references: [id])
+  creditPerTeam         Decimal @db.Decimal(14, 4)
+  minPlayersPerTeam     Int
+  maxPlayersPerTeam     Int
+  minTeams              Int
+  maxTeams              Int
+  unsoldPrice           Decimal @db.Decimal(14, 4)
+  defaultLotDurationSec Int     @default(30)
+}
+
+model BidIncrementTier {
+  id         String  @id @default(cuid())
+  auctionId  String
+  auction    Auction @relation(fields: [auctionId], references: [id])
+  fromAmount Decimal @db.Decimal(14, 4) // increment applies when current price >= fromAmount
+  increment  Decimal @db.Decimal(14, 4)
+
+  @@unique([auctionId, fromAmount])
+  @@index([auctionId])
+}
+
+model Team {
+  id          String  @id @default(cuid())
+  auctionId   String
+  auction     Auction @relation(fields: [auctionId], references: [id])
+  ownerUserId String
+  owner       User    @relation("TeamOwner", fields: [ownerUserId], references: [id])
+  name        String
+  shortName   String?
+  logoUrl     String?
+
+  // Denormalized live tallies (updated transactionally with each win/assignment)
+  committedAmount Decimal @default(0) @db.Decimal(14, 4)
+  playerCount     Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  players     TeamPlayer[]
+  bids        Bid[]
+  wonLots     AuctionPlayer[] @relation("LotWinner")
+  leadingLots AuctionPlayer[] @relation("LotLeader")
+  lineup      Lineup?
+
+  @@unique([auctionId, ownerUserId])
+  @@index([auctionId])
+}
+
+model AuctionPlayer {
+  id        String       @id @default(cuid())
+  auctionId String
+  auction   Auction      @relation("AuctionLots", fields: [auctionId], references: [id])
+  playerId  String
+  player    Player       @relation(fields: [playerId], references: [id])
+  basePrice Decimal      @db.Decimal(14, 4)
+  round     AuctionRound @default(MAIN)
+  status    LotStatus    @default(PENDING)
+  lotOrder  Int?
+  isOverseas Boolean     @default(false) // organizer flags overseas players (for XI cap)
+
+  // Live leading state (authoritative while ON_BLOCK)
+  currentPrice  Decimal? @db.Decimal(14, 4)
+  leadingTeamId String?
+  leadingTeam   Team?    @relation("LotLeader", fields: [leadingTeamId], references: [id])
+  version       Int      @default(0) // optimistic-lock guard for concurrent bids
+
+  // Final outcome
+  soldPrice    Decimal? @db.Decimal(14, 4)
+  soldToTeamId String?
+  soldToTeam   Team?    @relation("LotWinner", fields: [soldToTeamId], references: [id])
+
+  // Back-relation for Auction.currentAuctionPlayer (1:1)
+  currentForAuction Auction? @relation("CurrentLot")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bids        Bid[]
+  acquisition TeamPlayer?
+
+  @@unique([auctionId, playerId])
+  @@index([auctionId, status])
+  @@index([auctionId, round])
+}
+
+model Bid {
+  id              String        @id @default(cuid())
+  auctionId       String
+  auction         Auction       @relation(fields: [auctionId], references: [id])
+  auctionPlayerId String
+  auctionPlayer   AuctionPlayer @relation(fields: [auctionPlayerId], references: [id])
+  teamId          String
+  team            Team          @relation(fields: [teamId], references: [id])
+  bidderUserId    String
+  bidder          User          @relation(fields: [bidderUserId], references: [id])
+  amount          Decimal       @db.Decimal(14, 4)
+  clientBidId     String? // for idempotent retries
+  createdAt       DateTime      @default(now())
+
+  @@index([auctionPlayerId, createdAt])
+  @@index([teamId])
+  @@index([auctionId])
+}
+
+model TeamPlayer {
+  id              String          @id @default(cuid())
+  teamId          String
+  team            Team            @relation(fields: [teamId], references: [id])
+  auctionPlayerId String          @unique
+  auctionPlayer   AuctionPlayer   @relation(fields: [auctionPlayerId], references: [id])
+  playerId        String
+  player          Player          @relation(fields: [playerId], references: [id])
+  price           Decimal         @db.Decimal(14, 4)
+  acquiredVia     AcquisitionType
+  createdAt       DateTime        @default(now())
+  lineupMember    LineupMember?
+
+  @@index([teamId])
+  @@index([playerId])
+}
+
+// ===================== Post-auction lineups =====================
+
+// Organizer-set lineup rules, 1:1 with an auction. Sport is fixed on the
+// league, so cricket-only and football-only fields coexist here; validators
+// apply only those relevant to the auction's sport.
+model LineupRules {
+  id        String  @id @default(cuid())
+  auctionId String  @unique
+  auction   Auction @relation(fields: [auctionId], references: [id])
+
+  startingSize Int @default(11) // size of the Playing XI (organizer-overridable)
+
+  // Overseas cap (both sports). Counted within the starting XI.
+  overseasCapEnabled Boolean @default(false)
+  maxOverseasInXI    Int?
+
+  // Cricket required-role toggles
+  requireWicketkeeper     Boolean @default(true)
+  requireCaptain          Boolean @default(true)
+  requireViceCaptain      Boolean @default(true)
+  requireFirstBowler      Boolean @default(true)
+  requireSecondBowler     Boolean @default(true)
+  requireFullBattingOrder Boolean @default(true)
+
+  // Football
+  benchSize Int? // substitute-bench size; null = no bench requirement
+
+  // Edit / lock policy
+  editableAfterLockByOwner Boolean @default(false) // organizer can always edit
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Global football formation preset (e.g. "4-4-2"). numGK + numDef + numMid +
+// numFwd must equal the auction's startingSize (checked by the validator).
+model Formation {
+  id     String @id @default(cuid())
+  name   String @unique
+  numGK  Int    @default(1)
+  numDef Int
+  numMid Int
+  numFwd Int
+
+  allowedIn AuctionAllowedFormation[]
+  lineups   Lineup[]
+}
+
+// Which formations the organizer permits for a given auction (football).
+model AuctionAllowedFormation {
+  id          String    @id @default(cuid())
+  auctionId   String
+  auction     Auction   @relation(fields: [auctionId], references: [id])
+  formationId String
+  formation   Formation @relation(fields: [formationId], references: [id])
+
+  @@unique([auctionId, formationId])
+  @@index([auctionId])
+}
+
+// One fixed lineup per team, built after the auction completes.
+model Lineup {
+  id     String @id @default(cuid())
+  teamId String @unique
+  team   Team   @relation(fields: [teamId], references: [id])
+
+  status      LineupStatus @default(DRAFT)
+  formationId String? // football only
+  formation   Formation?   @relation(fields: [formationId], references: [id])
+
+  lockedById String?
+  lockedBy   User?     @relation("LineupLockedBy", fields: [lockedById], references: [id])
+  lockedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members LineupMember[]
+
+  @@index([formationId])
+}
+
+// A squad player's placement and roles within the team's lineup.
+model LineupMember {
+  id           String     @id @default(cuid())
+  lineupId     String
+  lineup       Lineup     @relation(fields: [lineupId], references: [id])
+  teamPlayerId String     @unique // each squad player appears at most once
+  teamPlayer   TeamPlayer @relation(fields: [teamPlayerId], references: [id])
+
+  membership LineupMembership @default(RESERVE)
+
+  // Cricket
+  battingOrder   Int? // 1..startingSize for STARTERs; null otherwise
+  isWicketkeeper Boolean @default(false)
+  isFirstBowler  Boolean @default(false)
+  isSecondBowler Boolean @default(false)
+
+  // Both sports
+  isCaptain     Boolean @default(false)
+  isViceCaptain Boolean @default(false)
+
+  // Football: which formation slot category the starter occupies
+  assignedPosition FootballPosition?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([lineupId, battingOrder]) // batting order unique within a lineup
+  @@index([lineupId, membership])
+}
