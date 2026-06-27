@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { StateSnapshot, SnapshotTeam, CurrentLot } from "shared";
+import type { StateSnapshot, SnapshotTeam, CurrentLot, LiveLot } from "shared";
 import { useAuth } from "../auth/AuthContext.js";
 import { useAuctionRoom, type AuctionRoom } from "../../socket/useAuctionRoom.js";
 import { Card } from "../../components/ui/card.js";
 import { Button } from "../../components/ui/button.js";
 import { Select } from "../../components/ui/select.js";
-import { StatusBadge, Countdown, fmtCr, cmpMoney } from "./widgets.js";
+import { StatusBadge, Countdown, fmtCr, cmpMoney, PlayerIcon } from "./widgets.js";
 
 export function AuctionLivePage() {
   const { id } = useParams();
@@ -78,6 +78,7 @@ export function AuctionLivePage() {
         </div>
         <TeamsBoard
           teams={teams}
+          creditPerTeam={snapshot.rules?.creditPerTeam ?? null}
           leadingTeamId={currentLot?.leadingTeamId ?? null}
           myTeamId={myTeam?.id ?? null}
         />
@@ -109,6 +110,8 @@ export function AuctionLivePage() {
       ) : (
         <LotQueue snapshot={snapshot} isOrg={isOrg} onOpen={room.openLot} />
       )}
+
+      <TeamRosters teams={teams} lots={snapshot.lots.items} myTeamId={myTeam?.id ?? null} />
     </div>
   );
 }
@@ -366,39 +369,134 @@ function OrganizerControls({ room, snapshot }: { room: AuctionRoom; snapshot: St
 
 function TeamsBoard({
   teams,
+  creditPerTeam,
   leadingTeamId,
   myTeamId,
 }: {
   teams: SnapshotTeam[];
+  creditPerTeam: string | null;
   leadingTeamId: string | null;
   myTeamId: string | null;
 }) {
   return (
     <Card>
-      <h3 className="mb-3 text-sm font-semibold text-slate-300">Teams</h3>
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-slate-300">Teams</h3>
+        {creditPerTeam && (
+          <span className="text-xs text-slate-500">Wallet {fmtCr(creditPerTeam)}</span>
+        )}
+      </div>
       <div className="space-y-2">
-        {teams.map((t) => (
-          <div
-            key={t.id}
-            className={`rounded-md border px-3 py-2 ${
-              t.id === leadingTeamId ? "border-emerald-600 bg-emerald-500/5" : "border-slate-800"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="font-medium">
-                {t.name}
-                {t.id === myTeamId && <span className="ml-2 text-xs text-indigo-400">you</span>}
-              </span>
-              <span className="text-xs text-slate-400">{t.playerCount} players</span>
+        {teams.map((t) => {
+          const remaining =
+            creditPerTeam != null
+              ? (Number(creditPerTeam) - Number(t.committedAmount)).toFixed(2)
+              : null;
+          return (
+            <div
+              key={t.id}
+              className={`rounded-md border px-3 py-2 ${
+                t.id === leadingTeamId ? "border-emerald-600 bg-emerald-500/5" : "border-slate-800"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-medium">
+                  {t.name}
+                  {t.id === myTeamId && <span className="ml-2 text-xs text-indigo-400">you</span>}
+                </span>
+                <span className="text-xs text-slate-400">{t.playerCount} players</span>
+              </div>
+              <div className="mt-1 flex justify-between text-xs text-slate-400">
+                <span>Spent {fmtCr(t.committedAmount)}</span>
+                {remaining != null && <span>Remaining {fmtCr(remaining)}</span>}
+                <span>Max {fmtCr(t.maxBid)}</span>
+              </div>
             </div>
-            <div className="mt-1 flex justify-between text-xs text-slate-400">
-              <span>Spent {fmtCr(t.committedAmount)}</span>
-              <span>Max {fmtCr(t.maxBid)}</span>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
+  );
+}
+
+/** Cricket role sections, in display order. Pace bowlers (FAST/MEDIUM_FAST)
+ * group together; SPINNER is its own section. */
+const CRICKET_SECTIONS: { key: string; label: string; match: (l: LiveLot) => boolean }[] = [
+  { key: "BATSMAN", label: "Batsmen", match: (l) => l.cricketRole === "BATSMAN" },
+  { key: "WICKETKEEPER", label: "Wicketkeepers", match: (l) => l.cricketRole === "WICKETKEEPER" },
+  {
+    key: "FAST",
+    label: "Fast bowlers",
+    match: (l) => l.cricketRole === "BOWLER" && l.bowlingStyle !== "SPINNER",
+  },
+  {
+    key: "SPINNER",
+    label: "Spinners",
+    match: (l) => l.cricketRole === "BOWLER" && l.bowlingStyle === "SPINNER",
+  },
+  { key: "ALL_ROUNDER", label: "All-rounders", match: (l) => l.cricketRole === "ALL_ROUNDER" },
+];
+
+/** Status-driven card tone: sold→green, unsold→red, on-block→amber, else neutral. */
+function lotTone(status: LiveLot["status"]): string {
+  switch (status) {
+    case "SOLD":
+    case "ASSIGNED":
+      return "border-emerald-600 bg-emerald-500/5";
+    case "UNSOLD":
+      return "border-red-600 bg-red-500/5";
+    case "ON_BLOCK":
+      return "border-amber-500 bg-amber-500/10";
+    default:
+      return "border-slate-800";
+  }
+}
+
+function PlayerCard({
+  lot,
+  index,
+  isOrg,
+  canOpen,
+  onOpen,
+  teamName,
+}: {
+  lot: LiveLot;
+  index: number;
+  isOrg: boolean;
+  canOpen: boolean;
+  onOpen: (auctionPlayerId: string) => void;
+  teamName: (tid: string | null) => string;
+}) {
+  const sold = lot.status === "SOLD" || lot.status === "ASSIGNED";
+  const showOpen = isOrg && lot.status === "PENDING";
+  const info = sold
+    ? `${fmtCr(lot.soldPrice)} → ${teamName(lot.soldToTeamId)}`
+    : lot.status === "UNSOLD"
+      ? "unsold"
+      : fmtCr(lot.basePrice);
+  return (
+    <div className={`flex items-center gap-1 rounded border px-1.5 py-0.5 ${lotTone(lot.status)}`}>
+      <span className="w-3 shrink-0 text-right text-[10px] tabular-nums text-slate-500">
+        {index}
+      </span>
+      <PlayerIcon name={lot.playerName} photoUrl={lot.photoUrl} />
+      <span className="min-w-0 flex-1 truncate text-xs leading-tight">
+        {lot.playerName}
+        {lot.isOverseas && <span className="ml-0.5 text-[10px] text-sky-400">✈</span>}
+      </span>
+      {showOpen ? (
+        <Button
+          variant="ghost"
+          className="h-auto shrink-0 px-1 py-0 text-[10px]"
+          disabled={!canOpen}
+          onClick={() => onOpen(lot.auctionPlayerId)}
+        >
+          Open
+        </Button>
+      ) : (
+        <span className="shrink-0 truncate text-[10px] text-slate-400">{info}</span>
+      )}
+    </div>
   );
 }
 
@@ -413,47 +511,141 @@ function LotQueue({
 }) {
   const { lots, auction, currentLot } = snapshot;
   const live = auction.status === "LIVE" || auction.status === "RE_AUCTION";
+  const canOpen = live && !currentLot;
   const teamName = (tid: string | null) => snapshot.teams.find((t) => t.id === tid)?.name ?? "—";
   const c = lots.counts;
+
+  const header = (
+    <div className="mb-3 flex items-center justify-between">
+      <h3 className="text-sm font-semibold text-slate-300">Lots</h3>
+      <span className="text-xs text-slate-500">
+        {c.PENDING} pending · {c.SOLD} sold · {c.UNSOLD} unsold · {c.ASSIGNED} assigned
+      </span>
+    </div>
+  );
+
+  const renderCards = (items: LiveLot[]) =>
+    items.map((l, i) => (
+      <PlayerCard
+        key={l.auctionPlayerId}
+        lot={l}
+        index={i + 1}
+        isOrg={isOrg}
+        canOpen={canOpen}
+        onOpen={onOpen}
+        teamName={teamName}
+      />
+    ));
+
+  if (auction.sport !== "CRICKET") {
+    // Non-cricket auctions: one flat 3-column grid of player cards.
+    return (
+      <Card>
+        {header}
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-5">
+          {renderCards(lots.items)}
+        </div>
+      </Card>
+    );
+  }
+
+  const sections = CRICKET_SECTIONS.map((s) => ({
+    ...s,
+    items: lots.items.filter(s.match),
+  })).filter((s) => s.items.length > 0);
+
+  // Cricket players that don't match any section (e.g. missing role) still show.
+  const matched = new Set(sections.flatMap((s) => s.items.map((l) => l.auctionPlayerId)));
+  const others = lots.items.filter((l) => !matched.has(l.auctionPlayerId));
+  if (others.length > 0) {
+    sections.push({ key: "OTHER", label: "Unclassified", match: () => false, items: others });
+  }
+
+  // Each role section is a column in a 3-wide grid, wrapping to the next row.
   return (
     <Card>
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-300">Lots</h3>
-        <span className="text-xs text-slate-500">
-          {c.PENDING} pending · {c.SOLD} sold · {c.UNSOLD} unsold · {c.ASSIGNED} assigned
-        </span>
+      {header}
+      <div className="grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
+        {sections.map((s) => (
+          <div key={s.key}>
+            <div className="mb-1.5 flex items-center gap-1.5 border-b border-slate-800 pb-1">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                {s.label}
+              </h4>
+              <span className="text-[10px] text-slate-600">{s.items.length}</span>
+            </div>
+            <div className="space-y-1">{renderCards(s.items)}</div>
+          </div>
+        ))}
       </div>
-      <div className="max-h-96 overflow-y-auto">
-        <table className="w-full text-sm">
-          <tbody>
-            {lots.items.map((l) => (
-              <tr key={l.auctionPlayerId} className="border-b border-slate-800/60">
-                <td className="py-1.5">
-                  {l.playerName}
-                  {l.isOverseas && <span className="ml-1 text-xs text-sky-400">✈</span>}
-                </td>
-                <td className="py-1.5 text-xs text-slate-500">{l.status}</td>
-                <td className="py-1.5 text-right text-xs text-slate-400">
-                  {l.status === "SOLD" || l.status === "ASSIGNED"
-                    ? `${fmtCr(l.soldPrice)} → ${teamName(l.soldToTeamId)}`
-                    : `base ${fmtCr(l.basePrice)}`}
-                </td>
-                <td className="py-1.5 pl-3 text-right">
-                  {isOrg && l.status === "PENDING" && (
-                    <Button
-                      variant="ghost"
-                      className="px-2 py-1 text-xs"
-                      disabled={!live || !!currentLot}
-                      onClick={() => onOpen(l.auctionPlayerId)}
-                    >
-                      Open
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    </Card>
+  );
+}
+
+/** Per-team roster grid: each team's won players (SOLD/ASSIGNED), derived from
+ * lots' soldToTeamId. All teams shown; empty teams get a placeholder. */
+function TeamRosters({
+  teams,
+  lots,
+  myTeamId,
+}: {
+  teams: SnapshotTeam[];
+  lots: LiveLot[];
+  myTeamId: string | null;
+}) {
+  const rosterOf = (teamId: string) =>
+    lots.filter(
+      (l) => l.soldToTeamId === teamId && (l.status === "SOLD" || l.status === "ASSIGNED"),
+    );
+  return (
+    <Card>
+      <h3 className="mb-3 text-sm font-semibold text-slate-300">Team rosters</h3>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {teams.map((t) => {
+          const players = rosterOf(t.id);
+          return (
+            <div key={t.id} className="rounded-md border border-slate-800 p-2.5">
+              <div className="mb-2 flex items-center gap-2 border-b border-slate-800 pb-1.5">
+                {t.primaryColor && (
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: t.primaryColor }}
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  {t.name}
+                  {t.id === myTeamId && <span className="ml-1.5 text-xs text-indigo-400">you</span>}
+                </span>
+                <span className="shrink-0 text-[10px] text-slate-500">
+                  {players.length} · {fmtCr(t.committedAmount)}
+                </span>
+              </div>
+              {players.length === 0 ? (
+                <p className="py-2 text-center text-[11px] text-slate-600">No players yet</p>
+              ) : (
+                <div className="space-y-1">
+                  {players.map((l, i) => (
+                    <div key={l.auctionPlayerId} className="flex items-center gap-1.5">
+                      <span className="w-3 shrink-0 text-right text-[10px] tabular-nums text-slate-500">
+                        {i + 1}
+                      </span>
+                      <PlayerIcon name={l.playerName} photoUrl={l.photoUrl} />
+                      <span className="min-w-0 flex-1 truncate text-xs">
+                        {l.playerName}
+                        {l.isOverseas && (
+                          <span className="ml-0.5 text-[10px] text-sky-400">✈</span>
+                        )}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-slate-400">
+                        {fmtCr(l.soldPrice)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </Card>
   );

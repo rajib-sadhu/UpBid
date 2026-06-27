@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { updateSeasonSchema, createAuctionSchema } from "shared";
+import { updateSeasonSchema, createAuctionSchema, setSeasonFranchisesSchema } from "shared";
 import { authenticate, requireOwnership } from "../../auth/middleware.js";
 import { validateBody } from "../../middleware/validate.js";
 import { asyncHandler } from "../../lib/async-handler.js";
@@ -16,6 +16,15 @@ const ownSeasonNested = requireOwnership((req) => seasonOwnerId(req.params.seaso
 router.get("/:id", ownSeason, asyncHandler(ctrl.getSeason));
 router.patch("/:id", ownSeason, validateBody(updateSeasonSchema), asyncHandler(ctrl.updateSeason));
 router.delete("/:id", ownSeason, asyncHandler(ctrl.deleteSeason));
+
+// Participating franchises (which league teams play this season)
+router.get("/:id/franchises", ownSeason, asyncHandler(ctrl.getSeasonFranchises));
+router.put(
+  "/:id/franchises",
+  ownSeason,
+  validateBody(setSeasonFranchisesSchema),
+  asyncHandler(ctrl.setSeasonFranchises),
+);
 
 // Auctions nested under a season
 router.get("/:seasonId/auctions", ownSeasonNested, asyncHandler(auctions.listAuctions));

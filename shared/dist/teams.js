@@ -1,10 +1,6 @@
-import { z } from "zod";
-export const createTeamSchema = z.object({
-    ownerUserId: z.string().min(1, "Pick a franchise owner"),
-    name: z.string().trim().min(1, "Name is required").max(120),
-    shortName: z.string().trim().max(12).optional().or(z.literal("")),
-});
-export const updateTeamSchema = z.object({
-    name: z.string().trim().min(1, "Name is required").max(120),
-    shortName: z.string().trim().max(12).optional().or(z.literal("")),
-});
+// A Team is a per-auction participation of a league Franchise (see franchise.ts):
+// it carries the auction-specific budget/squad tallies. Identity fields
+// (name, shortName, colors, logoUrl, owner) are sourced from the franchise.
+// Teams are materialized at go-live from the season's selected franchises — there
+// is no direct team create/update endpoint.
+export {};

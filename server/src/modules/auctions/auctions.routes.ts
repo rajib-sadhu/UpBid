@@ -5,15 +5,12 @@ import {
   lineupRulesSchema,
   incrementTiersSchema,
   allowedFormationsSchema,
-  createTeamSchema,
-  updateTeamSchema,
   addLotsSchema,
   updateLotSchema,
 } from "shared";
 import { authenticate, requireOwnership } from "../../auth/middleware.js";
 import { validateBody } from "../../middleware/validate.js";
 import { asyncHandler } from "../../lib/async-handler.js";
-import { uploadImage } from "../../uploads/multer.js";
 import { auctionOwnerId } from "./auctions.service.js";
 import * as a from "./auctions.controller.js";
 import * as teams from "./teams.controller.js";
@@ -55,17 +52,8 @@ router.put(
 );
 router.post("/:id/go-live", own, asyncHandler(a.goLive));
 
-// Teams
+// Teams (read-only participants; materialized at go-live from season franchises)
 router.get("/:id/teams", own, asyncHandler(teams.listTeams));
-router.post("/:id/teams", own, validateBody(createTeamSchema), asyncHandler(teams.createTeam));
-router.patch(
-  "/:id/teams/:teamId",
-  own,
-  validateBody(updateTeamSchema),
-  asyncHandler(teams.updateTeam),
-);
-router.delete("/:id/teams/:teamId", own, asyncHandler(teams.deleteTeam));
-router.post("/:id/teams/:teamId/logo", own, uploadImage, asyncHandler(teams.uploadTeamLogo));
 
 // Lots
 router.get("/:id/lots", own, asyncHandler(lots.listLots));

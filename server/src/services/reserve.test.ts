@@ -25,30 +25,30 @@ describe("maxBid (reserve math)", () => {
   // bidding on the 7th → must keep 5 * 0.5 = 2.5 in reserve → maxBid = 0.5.
   it("caps the 7th-player bid at 0.5 (the worked example)", () => {
     const m = maxBid(base({ committedAmount: money("97"), playerCount: 6 }));
-    expect(m.toFixed(4)).toBe("0.5000");
+    expect(m.toFixed(2)).toBe("0.50");
   });
 
   it("first player on an empty team reserves 11 slots: 100 - 5.5 = 94.5", () => {
     const m = maxBid(base({ committedAmount: money("0"), playerCount: 0 }));
-    expect(m.toFixed(4)).toBe("94.5000");
+    expect(m.toFixed(2)).toBe("94.50");
   });
 
   it("once the minimum is met the reserve term is zero (full remaining credit)", () => {
     // playerCount 12 → max(0, 12 - 13) = 0 → maxBid = credit - committed.
     const m = maxBid(base({ committedAmount: money("40"), playerCount: 12 }));
-    expect(m.toFixed(4)).toBe("60.0000");
+    expect(m.toFixed(2)).toBe("60.00");
   });
 
   it("reserve never goes negative when already past the minimum", () => {
     const m = maxBid(base({ committedAmount: money("10"), playerCount: 20 }));
-    expect(m.toFixed(4)).toBe("90.0000");
+    expect(m.toFixed(2)).toBe("90.00");
   });
 
   it("handles a zero unsold price (no reserve held back)", () => {
     const m = maxBid(
       base({ committedAmount: money("30"), playerCount: 2, unsoldPrice: money("0") }),
     );
-    expect(m.toFixed(4)).toBe("70.0000");
+    expect(m.toFixed(2)).toBe("70.00");
   });
 });
 
@@ -60,7 +60,8 @@ describe("canAcceptBid (reserve + squad cap)", () => {
   });
 
   it("rejects a bid above maxBid", () => {
-    expect(canAcceptBid(input, money("0.5001"))).toBe(false);
+    // Money is capped at 2 decimals, so 0.51 is the smallest amount over the 0.5 cap.
+    expect(canAcceptBid(input, money("0.51"))).toBe(false);
   });
 
   it("rejects any bid once the squad is full, even with credit left", () => {
@@ -77,15 +78,15 @@ describe("requiredIncrement", () => {
   ];
 
   it("picks the tier with the greatest fromAmount <= currentPrice", () => {
-    expect(requiredIncrement(money("0.5"), tiers).toFixed(4)).toBe("0.1000");
-    expect(requiredIncrement(money("2"), tiers).toFixed(4)).toBe("0.2500");
-    expect(requiredIncrement(money("4.75"), tiers).toFixed(4)).toBe("0.2500");
-    expect(requiredIncrement(money("9"), tiers).toFixed(4)).toBe("0.5000");
+    expect(requiredIncrement(money("0.5"), tiers).toFixed(2)).toBe("0.10");
+    expect(requiredIncrement(money("2"), tiers).toFixed(2)).toBe("0.25");
+    expect(requiredIncrement(money("4.75"), tiers).toFixed(2)).toBe("0.25");
+    expect(requiredIncrement(money("9"), tiers).toFixed(2)).toBe("0.50");
   });
 
   it("falls back to the lowest tier below the first threshold", () => {
     const sparse: IncrementTier[] = [{ fromAmount: money("1"), increment: money("0.2") }];
-    expect(requiredIncrement(money("0.5"), sparse).toFixed(4)).toBe("0.2000");
+    expect(requiredIncrement(money("0.5"), sparse).toFixed(2)).toBe("0.20");
   });
 });
 
@@ -96,11 +97,11 @@ describe("requiredNextBid", () => {
   ];
 
   it("the first bid must equal the base price", () => {
-    expect(requiredNextBid(null, money("2"), tiers).toFixed(4)).toBe("2.0000");
+    expect(requiredNextBid(null, money("2"), tiers).toFixed(2)).toBe("2.00");
   });
 
   it("subsequent bids add the applicable increment", () => {
-    expect(requiredNextBid(money("2"), money("2"), tiers).toFixed(4)).toBe("2.2500");
-    expect(requiredNextBid(money("0.5"), money("0.5"), tiers).toFixed(4)).toBe("0.6000");
+    expect(requiredNextBid(money("2"), money("2"), tiers).toFixed(2)).toBe("2.25");
+    expect(requiredNextBid(money("0.5"), money("0.5"), tiers).toFixed(2)).toBe("0.60");
   });
 });

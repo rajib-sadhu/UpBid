@@ -14,3 +14,7 @@ export const createSeasonSchema = z
 })
     .refine((v) => !v.startDate || !v.endDate || v.startDate <= v.endDate, { message: "End date must be on or after start date", path: ["endDate"] });
 export const updateSeasonSchema = createSeasonSchema;
+// ---- Participating franchises (which league franchises play this season) ----
+export const setSeasonFranchisesSchema = z.object({
+    franchiseIds: z.array(z.string().min(1)).max(64),
+});

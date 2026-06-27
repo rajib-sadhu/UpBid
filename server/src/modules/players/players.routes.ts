@@ -11,7 +11,14 @@ const router = Router();
 router.use(authenticate, requireRole("SUPER_ADMIN", "ORGANIZER"));
 
 router.get("/", asyncHandler(ctrl.listPlayers));
-router.post("/", validateBody(createPlayerSchema), asyncHandler(ctrl.createPlayer));
+// Create accepts the photo with the form (multipart): multer fills req.body +
+// req.file before validation runs.
+router.post(
+  "/",
+  uploadImage,
+  validateBody(createPlayerSchema),
+  asyncHandler(ctrl.createPlayer),
+);
 router.get("/:id", asyncHandler(ctrl.getPlayer));
 router.patch("/:id", validateBody(updatePlayerSchema), asyncHandler(ctrl.updatePlayer));
 router.delete("/:id", asyncHandler(ctrl.deletePlayer));

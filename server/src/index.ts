@@ -16,6 +16,7 @@ import playerRoutes from "./modules/players/players.routes.js";
 import auctionRoutes from "./modules/auctions/auctions.routes.js";
 import formationRoutes from "./modules/auctions/formations.routes.js";
 import lineupRoutes from "./modules/lineups/lineups.routes.js";
+import monitorRoutes from "./modules/monitor/monitor.routes.js";
 import { errorHandler } from "./middleware/error.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +55,7 @@ app.use("/api/players", playerRoutes);
 app.use("/api/auctions", auctionRoutes);
 app.use("/api/formations", formationRoutes);
 app.use("/api/teams", lineupRoutes);
+app.use("/api/monitor", monitorRoutes);
 
 // Unknown API route → JSON 404. Must precede the SPA catch-all below so that
 // `/api/*` never falls through to index.html (which would return HTML 200).

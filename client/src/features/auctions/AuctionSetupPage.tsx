@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { updateAuctionSchema, BIDDING_MODES } from "shared";
-import type { UpdateAuctionInput, AuctionDetail, Team, Lot, Formation, PublicUser } from "shared";
+import type { UpdateAuctionInput, AuctionDetail, Lot, Formation } from "shared";
 import { apiFetch, ApiClientError } from "../../api/client.js";
 import { Button } from "../../components/ui/button.js";
 import { Input } from "../../components/ui/input.js";
@@ -28,26 +28,20 @@ const STATUS_STYLES: Record<string, string> = {
 export function AuctionSetupPage() {
   const { id = "" } = useParams();
   const [detail, setDetail] = useState<AuctionDetail | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
   const [lots, setLots] = useState<Lot[]>([]);
   const [formations, setFormations] = useState<Formation[]>([]);
-  const [franchises, setFranchises] = useState<PublicUser[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [goLiveMsg, setGoLiveMsg] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
-    const [d, t, l, f, users] = await Promise.all([
+    const [d, l, f] = await Promise.all([
       apiFetch<AuctionDetail>(`/api/auctions/${id}`),
-      apiFetch<Team[]>(`/api/auctions/${id}/teams`),
       apiFetch<Lot[]>(`/api/auctions/${id}/lots`),
       apiFetch<Formation[]>(`/api/formations`),
-      apiFetch<PublicUser[]>(`/api/users`),
     ]);
     setDetail(d);
-    setTeams(t);
     setLots(l);
     setFormations(f);
-    setFranchises(users.filter((u) => u.role === "FRANCHISE"));
   }, [id]);
 
   useEffect(() => {
@@ -170,15 +164,15 @@ export function AuctionSetupPage() {
         )}
       </div>
 
-      <TeamsCard
+      <TeamsCard seasonId={detail.seasonId} />
+
+      <LotsCard
         auctionId={id}
-        teams={teams}
-        franchises={franchises}
+        lots={lots}
+        defaultBasePrice={detail.rules?.defaultBasePrice}
         disabled={disabled}
         onChanged={loadAll}
       />
-
-      <LotsCard auctionId={id} lots={lots} disabled={disabled} onChanged={loadAll} />
     </div>
   );
 }

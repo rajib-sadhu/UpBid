@@ -24,8 +24,9 @@ export async function buildStateSnapshot(auctionId: string): Promise<StateSnapsh
     include: {
       rules: true,
       incrementTiers: { orderBy: { fromAmount: "asc" } },
-      teams: { orderBy: { createdAt: "asc" } },
+      teams: { orderBy: { createdAt: "asc" }, include: { franchise: true } },
       currentAuctionPlayer: { include: { player: true } },
+      season: { select: { league: { select: { sport: true } } } },
     },
   });
   if (!auction) throw Errors.notFound("Auction not found");
@@ -57,6 +58,7 @@ export async function buildStateSnapshot(auctionId: string): Promise<StateSnapsh
       status: auction.status,
       round: auction.round,
       biddingMode: auction.biddingMode,
+      sport: auction.season.league.sport,
     },
     rules: auction.rules
       ? {

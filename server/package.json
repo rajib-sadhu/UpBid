@@ -14,7 +14,9 @@
     "prisma:migrate": "dotenv -e ../.env -- prisma migrate dev",
     "prisma:deploy": "dotenv -e ../.env -- prisma migrate deploy",
     "prisma:studio": "dotenv -e ../.env -- prisma studio",
-    "db:seed": "dotenv -e ../.env -- tsx prisma/seed.ts"
+    "db:seed": "dotenv -e ../.env -- tsx prisma/seed.ts",
+    "import:cricket": "dotenv -e ../.env -- tsx src/scripts/import-cricket-players.ts",
+    "import:players-json": "dotenv -e ../.env -- tsx src/scripts/import-players-from-json.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",

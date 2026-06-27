@@ -9,9 +9,22 @@ const STATUS_STYLES: Record<string, string> = {
   COMPLETED: "bg-slate-700/40 text-slate-400",
 };
 
+/** Small circular player photo, falling back to the first initial. */
+export function PlayerIcon({ name, photoUrl }: { name: string; photoUrl: string | null }) {
+  return photoUrl ? (
+    <img src={photoUrl} alt={name} className="h-5 w-5 shrink-0 rounded-full object-cover" />
+  ) : (
+    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-800 text-[9px] text-slate-400">
+      {name.charAt(0)}
+    </span>
+  );
+}
+
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <span className={`rounded px-2 py-0.5 text-xs ${STATUS_STYLES[status] ?? "bg-slate-700/40"}`}>
+    <span
+      className={`hud-label rounded px-2 py-0.5 text-xs ${STATUS_STYLES[status] ?? "bg-slate-700/40"}`}
+    >
       {status}
     </span>
   );
@@ -41,9 +54,9 @@ export function Countdown({ endsAt, skewMs }: { endsAt: string | null; skewMs: n
     const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
   }, [endsAt]);
-  if (!endsAt) return <span className="tabular-nums">--</span>;
+  if (!endsAt) return <span className="stat">--</span>;
   const ms = Math.max(0, Date.parse(endsAt) - (now + skewMs));
   const secs = Math.ceil(ms / 1000);
   const tone = secs <= 5 ? "text-red-400" : secs <= 10 ? "text-amber-400" : "text-emerald-400";
-  return <span className={`tabular-nums font-semibold ${tone}`}>{secs}s</span>;
+  return <span className={`stat font-bold ${tone}`}>{secs}s</span>;
 }

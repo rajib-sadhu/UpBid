@@ -82,5 +82,57 @@ No schema change (used existing Lineup/LineupMember/LineupRules/Formation models
 > ⚠️ Not yet exercised end-to-end against MySQL (no DB in session) — run
 > `npm run dev` to smoke-test build → lock.
 
+## Phase 8 — Dashboards & tracking ✅ (awaiting review)
+No schema change (read-only views over existing models).
+
+- [x] Shared read-model DTOs (`shared/src/monitor.ts`): `AuctionMonitor`,
+      `MonitorTeam` (+ full squad), `MonitorProgress`, `MyTeamSummary`.
+- [x] Pure headroom math (`modules/monitor/monitor.service.ts` → `summarizeTeam`)
+      reusing the reserve `maxBid`; remaining credit, slots, below-minimum,
+      clamped max-bid. **5 unit tests** (mirrors the reserve worked example).
+- [x] Monitor module (`modules/monitor`): `GET /api/monitor/auctions/:id`
+      (organizer monitor / super-admin inspection / franchise-of-this-auction
+      view — gated by `canViewAuction`; `canManage` flag for owner+admin; lot
+      progress via `groupBy`; per-team spend, budget, squads, lineup status) and
+      `GET /api/monitor/my-teams` (franchise home view). Mounted `/api/monitor`.
+- [x] Client `AuctionMonitorPage` (`/auctions/:id/monitor`, all roles): lot
+      progress bar, per-team cards (spend/remaining/max-bid/squad/lineup badge),
+      refresh + open-live. Dashboard: Monitor links on active auctions + a
+      franchise "Your teams" panel; route wired in `App.tsx`.
+- [x] Super-admin global browse/edit already covered by existing all-scope list
+      endpoints (leagues/players/auctions/mine return everything for SUPER_ADMIN)
+      + ownership-bypass edits; the monitor adds team/lineup inspection.
+- [x] Verify: typecheck + lint clean; 41/41 tests; full build (server + client) green.
+
+> ⚠️ Read models not yet exercised against MySQL in this session (no DB here) —
+> run `npm run dev` to confirm the monitor populates from live data.
+
+## Feature — League franchises + season selection ✅ (awaiting review)
+Mid-Phase-8 enhancement (confirmed via Q&A): teams are now **league-level
+franchises** selected per season, with 3-letter short names, a required hex
+theme color, optional logo, and an optional/editable owner.
+
+- [x] Short names: reusable `shortNameSchema` (3 letters, auto-uppercase) +
+      `hexColorSchema`. League gets `shortName` (unique per organizer).
+- [x] Schema: new `Franchise` (league-level: name, shortName, themeColor, logo,
+      optional owner; unique [league,shortName] & [league,owner]) and
+      `SeasonFranchise` (participation). `Team` refactored → per-auction
+      participation referencing a franchise (identity read through the franchise;
+      unique [auction,franchise]). Migration `20260627120000_…` backfilled the
+      existing league short name to `BAL`. Both schema files kept in sync.
+- [x] Server: franchises module (league-nested CRUD + logo, uniqueness errors);
+      season selection (`GET/PUT /api/seasons/:id/franchises`, locked once an
+      auction leaves DRAFT). Go-live materializes a Team per selected franchise +
+      validates min/max. Team CRUD endpoints removed. Engine rewired to read
+      identity/owner via the franchise (bid/assignment/authz/monitor/my-teams/
+      phase/lineups/snapshot).
+- [x] Client: league page Franchises manager (color picker, logo, owner);
+      season page participating-teams selection (locked state); auction setup
+      Teams card now read-only participants; theme-color accents in the monitor.
+- [x] Verify: typecheck + lint clean; 41/41 tests; full build green; **21/21
+      end-to-end smoke** vs real MySQL+Socket.io (franchise CRUD + uniqueness,
+      optional owner, season select + lock, go-live materialization, franchise-
+      owned bidding, monitor identity).
+
 ## Later
-- Phase 8 — Dashboards & tracking. Phase 9 — Hardening. Phase 10 — Deploy.
+- Phase 9 — Hardening. Phase 10 — Deploy.

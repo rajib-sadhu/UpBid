@@ -29,7 +29,10 @@ export async function assignPlayer(
 
   const [lot, team] = await Promise.all([
     prisma.auctionPlayer.findUnique({ where: { id: auctionPlayerId } }),
-    prisma.team.findUnique({ where: { id: teamId } }),
+    prisma.team.findUnique({
+      where: { id: teamId },
+      include: { franchise: { select: { ownerUserId: true } } },
+    }),
   ]);
   if (!lot || lot.auctionId !== auctionId) throw Errors.notFound("Lot not found");
   if (!team || team.auctionId !== auctionId) throw Errors.notFound("Team not found");
@@ -43,7 +46,7 @@ export async function assignPlayer(
   let acquiredVia: "CHOSEN" | "FORCE_ASSIGNED";
   if (isAdmin || (user.role === "ORGANIZER" && user.id === ownerId)) {
     acquiredVia = "FORCE_ASSIGNED";
-  } else if (user.role === "FRANCHISE" && team.ownerUserId === user.id) {
+  } else if (user.role === "FRANCHISE" && team.franchise.ownerUserId === user.id) {
     acquiredVia = "CHOSEN";
   } else {
     throw Errors.forbidden("You cannot assign this player");

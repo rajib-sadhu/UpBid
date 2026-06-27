@@ -31,9 +31,8 @@ export function RulesCard({ auctionId, detail, disabled, onChanged }: Props) {
       creditPerTeam: r?.creditPerTeam ?? "100",
       minPlayersPerTeam: r?.minPlayersPerTeam ?? 11,
       maxPlayersPerTeam: r?.maxPlayersPerTeam ?? 25,
-      minTeams: r?.minTeams ?? 2,
-      maxTeams: r?.maxTeams ?? 10,
       unsoldPrice: r?.unsoldPrice ?? "0.5",
+      defaultBasePrice: r?.defaultBasePrice ?? "2",
       defaultLotDurationSec: r?.defaultLotDurationSec ?? 30,
     },
   });
@@ -68,10 +67,9 @@ export function RulesCard({ auctionId, detail, disabled, onChanged }: Props) {
         <div className="grid grid-cols-2 gap-3">
           {field("creditPerTeam", "Credit per team (cr)", "text")}
           {field("unsoldPrice", "Unsold price (cr)", "text")}
+          {field("defaultBasePrice", "Default base price (cr)", "text")}
           {field("minPlayersPerTeam", "Min players / team")}
           {field("maxPlayersPerTeam", "Max players / team")}
-          {field("minTeams", "Min teams")}
-          {field("maxTeams", "Max teams")}
           {field("defaultLotDurationSec", "Lot timer (sec)")}
         </div>
         {error && <p className="text-sm text-red-400">{error}</p>}

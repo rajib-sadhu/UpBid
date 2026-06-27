@@ -9,6 +9,7 @@ import { LeagueDetailPage } from "./features/leagues/LeagueDetailPage.js";
 import { SeasonDetailPage } from "./features/seasons/SeasonDetailPage.js";
 import { AuctionSetupPage } from "./features/auctions/AuctionSetupPage.js";
 import { AuctionLivePage } from "./features/auction-live/AuctionLivePage.js";
+import { AuctionMonitorPage } from "./features/monitor/AuctionMonitorPage.js";
 import { LineupPage } from "./features/lineups/LineupPage.js";
 import { ViewPlayersPage } from "./features/players/ViewPlayersPage.js";
 
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           {/* Live auction + lineup builder are open to all roles (franchises act here). */}
           <Route path="/auctions/:id/live" element={<AuctionLivePage />} />
+          <Route path="/auctions/:id/monitor" element={<AuctionMonitorPage />} />
           <Route path="/teams/:teamId/lineup" element={<LineupPage />} />
           <Route element={<RequireRole roles={["SUPER_ADMIN", "ORGANIZER"]} />}>
             <Route path="/users" element={<UsersPage />} />

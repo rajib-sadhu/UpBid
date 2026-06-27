@@ -20,10 +20,13 @@ export const createUserSchema = z.object({
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
 // Same shape today; kept as distinct names so the two endpoints can diverge later.
+// NOTE: createFranchiseUserSchema provisions a franchise USER ACCOUNT — distinct
+// from the league-level Franchise entity (franchise.ts), a team identity that such
+// a user can own.
 export const createOrganizerSchema = createUserSchema;
 export type CreateOrganizerInput = CreateUserInput;
-export const createFranchiseSchema = createUserSchema;
-export type CreateFranchiseInput = CreateUserInput;
+export const createFranchiseUserSchema = createUserSchema;
+export type CreateFranchiseUserInput = CreateUserInput;
 
 /** A user as exposed over the wire — never includes passwordHash. */
 export interface PublicUser {

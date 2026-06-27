@@ -22,7 +22,7 @@ export function ViewLeaguesPage() {
     formState: { errors, isSubmitting },
   } = useForm<CreateLeagueInput>({
     resolver: zodResolver(createLeagueSchema),
-    defaultValues: { name: "", sport: "CRICKET" },
+    defaultValues: { name: "", shortName: "", sport: "CRICKET" },
   });
 
   async function load() {
@@ -56,6 +56,19 @@ export function ViewLeaguesPage() {
               <Label htmlFor="name">Name</Label>
               <Input id="name" {...register("name")} />
               {errors.name && <p className="text-xs text-red-400">{errors.name.message}</p>}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="shortName">Short name</Label>
+              <Input
+                id="shortName"
+                maxLength={3}
+                placeholder="e.g. BAL"
+                className="uppercase"
+                {...register("shortName")}
+              />
+              {errors.shortName && (
+                <p className="text-xs text-red-400">{errors.shortName.message}</p>
+              )}
             </div>
             <div className="space-y-1">
               <Label htmlFor="sport">Sport</Label>

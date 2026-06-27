@@ -20,9 +20,9 @@ export async function auctionOwnerId(auctionId: string): Promise<string | null> 
 export async function canViewAuction(user: AuthUser, auctionId: string): Promise<boolean> {
   if (user.role === "SUPER_ADMIN") return true;
   if (user.role === "ORGANIZER") return (await auctionOwnerId(auctionId)) === user.id;
-  // FRANCHISE: must own a team in this auction.
+  // FRANCHISE: must own a participating franchise's team in this auction.
   const team = await prisma.team.findFirst({
-    where: { auctionId, ownerUserId: user.id },
+    where: { auctionId, franchise: { ownerUserId: user.id } },
     select: { id: true },
   });
   return team !== null;

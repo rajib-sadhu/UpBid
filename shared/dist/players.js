@@ -1,9 +1,70 @@
 import { z } from "zod";
-import { SPORTS, FOOTBALL_POSITIONS } from "./sports.js";
+import { SPORTS, FOOTBALL_POSITIONS, FOOTBALL_DETAIL_POSITIONS, FOOTBALL_DETAIL_BY_BUCKET } from "./sports.js";
 import { listQuerySchema } from "./pagination.js";
-// List query for the global player pool: pagination + search + optional sport filter.
+// ---- Cricket attribute enums ----------------------------------------------
+// Structured cricket player data. The playing role is chosen first; the other
+// fields are conditional on it (see createPlayerSchema below):
+//   - batting position: all roles
+//   - bowling style:    BOWLER, ALL_ROUNDER
+//   - all-rounder type: ALL_ROUNDER only
+export const CRICKET_ROLES = ["BATSMAN", "BOWLER", "WICKETKEEPER", "ALL_ROUNDER"];
+export const BATTING_POSITIONS = ["OPENER", "MIDDLE", "LOWER"];
+export const BOWLING_STYLES = ["FAST", "MEDIUM_FAST", "SPINNER"];
+export const ALL_ROUNDER_TYPES = ["ALL_ROUNDER", "BATTING", "BOWLING"];
+/** Human-readable labels for display + form option text. */
+export const CRICKET_ROLE_LABELS = {
+    BATSMAN: "Batsman",
+    BOWLER: "Bowler",
+    WICKETKEEPER: "Wicketkeeper",
+    ALL_ROUNDER: "All Rounder",
+};
+export const BATTING_POSITION_LABELS = {
+    OPENER: "Opener",
+    MIDDLE: "Middle",
+    LOWER: "Lower",
+};
+export const BOWLING_STYLE_LABELS = {
+    FAST: "Fast",
+    MEDIUM_FAST: "Medium Fast",
+    SPINNER: "Spinner",
+};
+export const ALL_ROUNDER_TYPE_LABELS = {
+    ALL_ROUNDER: "All-rounder",
+    BATTING: "Batting all-rounder",
+    BOWLING: "Bowling all-rounder",
+};
+/** Does a cricket playing role need a bowling style? */
+export function roleNeedsBowlingStyle(role) {
+    return role === "BOWLER" || role === "ALL_ROUNDER";
+}
+// Columns the players table can be sorted by (server-side, across all pages).
+export const PLAYER_SORT_FIELDS = [
+    "name",
+    "sport",
+    "nationality",
+    "dateOfBirth",
+    "externalRef",
+    "createdAt",
+    "role",
+    "cricketRole",
+    "battingPosition",
+    "bowlingStyle",
+    "allRounderType",
+    "footballPosition",
+    "footballDetailPosition",
+];
+// List query for the global player pool: pagination + search + optional sport
+// filter + sort. Defaults to newest-added first.
 export const playerQuerySchema = listQuerySchema.extend({
     sport: z.enum(SPORTS).optional(),
+    sort: z.enum(PLAYER_SORT_FIELDS).default("createdAt"),
+    dir: z.enum(["asc", "desc"]).default("desc"),
+});
+// Per-league availability list: sort by name or per-league ban status.
+export const LEAGUE_PLAYER_SORT_FIELDS = ["name", "banned"];
+export const leaguePlayerQuerySchema = listQuerySchema.extend({
+    sort: z.enum(LEAGUE_PLAYER_SORT_FIELDS).default("name"),
+    dir: z.enum(["asc", "desc"]).default("asc"),
 });
 const dateString = z
     .string()
@@ -19,12 +80,73 @@ export const createPlayerSchema = z
     nationality: optionalText,
     dateOfBirth: dateString,
     externalRef: optionalText,
-    // Structured position for football lineup validation; ignored for other sports.
+    // Optional photo: organizers may upload a file (handled outside Zod, as
+    // multipart) OR paste an external image URL here. Must be http(s) when given.
+    photoUrl: z
+        .string()
+        .trim()
+        .url("Enter a valid image URL")
+        .refine((u) => /^https?:\/\//i.test(u), "Image URL must start with http:// or https://")
+        .optional()
+        .or(z.literal("")),
+    // Broad position (lineup-critical) + detailed position, conditional on it.
+    // Ignored for non-football sports.
     footballPosition: z.enum(FOOTBALL_POSITIONS).optional().or(z.literal("")),
+    footballDetailPosition: z.enum(FOOTBALL_DETAIL_POSITIONS).optional().or(z.literal("")),
+    // Structured cricket attributes; ignored for other sports. Conditional rules
+    // are enforced in superRefine below.
+    cricketRole: z.enum(CRICKET_ROLES).optional().or(z.literal("")),
+    battingPosition: z.enum(BATTING_POSITIONS).optional().or(z.literal("")),
+    bowlingStyle: z.enum(BOWLING_STYLES).optional().or(z.literal("")),
+    allRounderType: z.enum(ALL_ROUNDER_TYPES).optional().or(z.literal("")),
 })
     .refine((v) => !(v.footballPosition && v.sport !== "FOOTBALL"), {
     message: "Football position only applies to football players",
     path: ["footballPosition"],
+})
+    .superRefine((v, ctx) => {
+    const issue = (path, message) => ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: [path] });
+    // ---- Cricket ----
+    if (v.sport === "CRICKET") {
+        if (!v.cricketRole) {
+            issue("cricketRole", "Playing role is required");
+        }
+        else {
+            // Batting position applies to every cricket role.
+            if (!v.battingPosition)
+                issue("battingPosition", "Batting position is required");
+            // Bowling style only for bowlers and all-rounders.
+            if (roleNeedsBowlingStyle(v.cricketRole) && !v.bowlingStyle) {
+                issue("bowlingStyle", "Bowling style is required");
+            }
+            // All-rounder type only for all-rounders.
+            if (v.cricketRole === "ALL_ROUNDER" && !v.allRounderType) {
+                issue("allRounderType", "All-rounder type is required");
+            }
+        }
+    }
+    else {
+        // Cricket fields must not be set on non-cricket players.
+        for (const f of ["cricketRole", "battingPosition", "bowlingStyle", "allRounderType"]) {
+            if (v[f])
+                issue(f, "Cricket fields only apply to cricket players");
+        }
+    }
+    // ---- Football ----
+    if (v.sport === "FOOTBALL") {
+        if (!v.footballPosition) {
+            issue("footballPosition", "Position is required");
+        }
+        else if (!v.footballDetailPosition) {
+            issue("footballDetailPosition", "Detailed position is required");
+        }
+        else if (!FOOTBALL_DETAIL_BY_BUCKET[v.footballPosition].includes(v.footballDetailPosition)) {
+            issue("footballDetailPosition", "Detailed position doesn't match the selected position");
+        }
+    }
+    else if (v.footballDetailPosition) {
+        issue("footballDetailPosition", "Football position only applies to football players");
+    }
 });
 // Full replace on update (same fields, sport included).
 export const updatePlayerSchema = createPlayerSchema;

@@ -12,22 +12,21 @@ import type {
 export interface TeamContext {
   teamId: string;
   teamName: string;
-  ownerUserId: string;
+  ownerUserId: string | null;
   auctionId: string;
   auctionStatus: AuctionStatus;
   sport: Sport;
   organizerId: string;
 }
 
-/** Load the team + its auction/sport/owner/organizer (throws NOT_FOUND). */
+/** Load the team + its franchise identity/auction/sport/organizer (throws NOT_FOUND). */
 export async function loadTeamContext(teamId: string): Promise<TeamContext> {
   const team = await prisma.team.findUnique({
     where: { id: teamId },
     select: {
       id: true,
-      name: true,
-      ownerUserId: true,
       auctionId: true,
+      franchise: { select: { name: true, ownerUserId: true } },
       auction: {
         select: {
           status: true,
@@ -39,8 +38,8 @@ export async function loadTeamContext(teamId: string): Promise<TeamContext> {
   if (!team) throw Errors.notFound("Team not found");
   return {
     teamId: team.id,
-    teamName: team.name,
-    ownerUserId: team.ownerUserId,
+    teamName: team.franchise.name,
+    ownerUserId: team.franchise.ownerUserId,
     auctionId: team.auctionId,
     auctionStatus: team.auction.status,
     sport: team.auction.season.league.sport,

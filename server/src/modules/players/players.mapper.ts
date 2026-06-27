@@ -14,6 +14,11 @@ export function toPlayer(p: PrismaPlayer): Player {
     photoUrl: p.photoUrl,
     externalRef: p.externalRef,
     footballPosition: p.footballPosition,
+    footballDetailPosition: p.footballDetailPosition,
+    cricketRole: p.cricketRole,
+    battingPosition: p.battingPosition,
+    bowlingStyle: p.bowlingStyle,
+    allRounderType: p.allRounderType,
     createdAt: p.createdAt.toISOString(),
   };
 }

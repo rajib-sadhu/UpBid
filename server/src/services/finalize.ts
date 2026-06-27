@@ -2,6 +2,7 @@ import type { LotSoldEvent, LotUnsoldEvent, LotCounts } from "shared";
 import { prisma } from "../lib/prisma.js";
 import { Errors, AppError } from "../lib/errors.js";
 import { toLiveLot, toTeamTally, toLotCounts, type LotWithPlayer } from "../realtime/mappers.js";
+import { moneyToWire } from "../lib/money.js";
 import * as timer from "../realtime/timer.js";
 
 export type FinalizeResult =
@@ -87,7 +88,7 @@ export async function finalizeLot(
       payload: {
         auctionPlayerId,
         soldToTeamId: winnerId,
-        soldPrice: (updatedLot!.soldPrice ?? soldPrice).toFixed(4),
+        soldPrice: moneyToWire(updatedLot!.soldPrice ?? soldPrice),
         team: toTeamTally(team!, auction.rules),
         lotCounts: counts,
         lot: toLiveLot(updatedLot as LotWithPlayer),

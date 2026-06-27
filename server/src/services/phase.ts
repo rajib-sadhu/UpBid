@@ -55,12 +55,12 @@ export async function advancePhase(
     if (!rules) throw Errors.invalidState("Auction has no rules configured");
     const short = await prisma.team.findFirst({
       where: { auctionId, playerCount: { lt: rules.minPlayersPerTeam } },
-      select: { name: true, playerCount: true },
+      select: { playerCount: true, franchise: { select: { name: true } } },
     });
     if (short) {
       throw new AppError(
         "MIN_NOT_MET",
-        `Team "${short.name}" has ${short.playerCount} players, below the minimum of ${rules.minPlayersPerTeam}`,
+        `Team "${short.franchise.name}" has ${short.playerCount} players, below the minimum of ${rules.minPlayersPerTeam}`,
         409,
       );
     }

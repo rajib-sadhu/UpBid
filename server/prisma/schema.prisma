@@ -4,7 +4,7 @@
 //   - Auction state is PUBLIC (everyone sees all teams' credit + squads live).
 //   - Players are GLOBAL; bans are PER-LEAGUE (PlayerLeagueStatus).
 //   - Accounts are organizer-provisioned (invite -> franchise sets password).
-// All monetary amounts are Decimal(14,4) in CRORE units (so 0.5 = 50 lakh).
+// All monetary amounts are Decimal(14,2) in CRORE units (so 0.5 = 50 lakh).
 
 generator client {
   provider = "prisma-client-js"
@@ -79,6 +79,49 @@ enum FootballPosition {
   FWD
 }
 
+// Detailed football position (descriptive); each value belongs to one bucket:
+// GK→GK; DEF→RB/CB/LB; MID→DMF/CMF/AMF; FWD→LW/RW/ST.
+enum FootballDetailPosition {
+  GK
+  RB
+  CB
+  LB
+  DMF
+  CMF
+  AMF
+  LW
+  RW
+  ST
+}
+
+// ---- Cricket player attributes --------------------------------------------
+
+enum CricketRole {
+  BATSMAN
+  BOWLER
+  WICKETKEEPER
+  ALL_ROUNDER
+}
+
+enum BattingPosition {
+  OPENER
+  MIDDLE
+  LOWER
+}
+
+enum BowlingStyle {
+  FAST
+  MEDIUM_FAST
+  SPINNER
+}
+
+// Type of all-rounder (which discipline they lean toward).
+enum AllRounderType {
+  ALL_ROUNDER
+  BATTING
+  BOWLING
+}
+
 enum LineupStatus {
   DRAFT
   LOCKED
@@ -86,7 +129,7 @@ enum LineupStatus {
 
 enum LineupMembership {
   STARTER // in the Playing XI
-  BENCH   // football substitute bench
+  BENCH // football substitute bench
   RESERVE // squad member not in the matchday squad
 }
 
@@ -111,7 +154,7 @@ model User {
   createdAccounts User[]  @relation("AccountCreator")
 
   organizedLeagues League[]             @relation("LeagueOrganizer")
-  teams            Team[]               @relation("TeamOwner")
+  franchises       Franchise[]          @relation("FranchiseOwner")
   bids             Bid[]
   bannedPlayers    PlayerLeagueStatus[] @relation("PlayerBannedBy")
   lockedLineups    Lineup[]             @relation("LineupLockedBy")
@@ -125,6 +168,7 @@ model User {
 model League {
   id          String   @id @default(cuid())
   name        String
+  shortName   String   @db.VarChar(3) // 3-letter code, uppercase; unique per organizer
   sport       Sport
   organizerId String
   organizer   User     @relation("LeagueOrganizer", fields: [organizerId], references: [id])
@@ -133,8 +177,32 @@ model League {
 
   seasons        Season[]
   playerStatuses PlayerLeagueStatus[]
+  franchises     Franchise[]
 
+  @@unique([organizerId, shortName])
   @@index([organizerId])
+}
+
+model Franchise {
+  id          String   @id @default(cuid())
+  leagueId    String
+  league      League   @relation(fields: [leagueId], references: [id])
+  name        String
+  shortName   String   @db.VarChar(3) // 3-letter code, uppercase; unique per league
+  primaryColor   String  @db.VarChar(7) // #RRGGBB primary color
+  secondaryColor String? @db.VarChar(7) // #RRGGBB secondary color (optional; falls back to primary)
+  logoUrl     String?
+  ownerUserId String?
+  owner       User?    @relation("FranchiseOwner", fields: [ownerUserId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  teams            Team[]
+  seasonFranchises SeasonFranchise[]
+
+  @@unique([leagueId, shortName])
+  @@unique([leagueId, ownerUserId])
+  @@index([leagueId])
 }
 
 model Season {
@@ -147,25 +215,47 @@ model Season {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  auctions Auction[]
+  auctions         Auction[]
+  seasonFranchises SeasonFranchise[]
 
   @@index([leagueId])
+}
+
+model SeasonFranchise {
+  id          String    @id @default(cuid())
+  seasonId    String
+  season      Season    @relation(fields: [seasonId], references: [id])
+  franchiseId String
+  franchise   Franchise @relation(fields: [franchiseId], references: [id])
+  createdAt   DateTime  @default(now())
+
+  @@unique([seasonId, franchiseId])
+  @@index([seasonId])
+  @@index([franchiseId])
 }
 
 // =============== Players (global) + per-league status ===============
 
 model Player {
-  id          String    @id @default(cuid())
-  name        String
-  sport       Sport
-  role        String? // sport-specific, e.g. "Batter", "Striker"
-  nationality String?
-  dateOfBirth DateTime?
-  photoUrl    String?
-  externalRef String? // optional id from an external source
+  id               String            @id @default(cuid())
+  name             String
+  sport            Sport
+  role             String? // sport-specific, e.g. "Batter", "Striker"
+  nationality      String?
+  dateOfBirth      DateTime?
+  photoUrl         String?
+  externalRef      String? // optional id from an external source
   // Structured position used for football lineup validation (null for cricket;
   // cricket roles are assigned at lineup time via LineupMember flags).
-  footballPosition FootballPosition?
+  footballPosition       FootballPosition?
+  footballDetailPosition FootballDetailPosition? // detailed position, conditional on the bucket
+  // Structured cricket attributes (null for non-cricket). Conditional by playing
+  // role: batting position applies to all roles; bowling style to BOWLER /
+  // ALL_ROUNDER; all-rounder type to ALL_ROUNDER only.
+  cricketRole      CricketRole?
+  battingPosition  BattingPosition?
+  bowlingStyle     BowlingStyle?
+  allRounderType   AllRounderType?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -213,11 +303,11 @@ model Auction {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  rules          AuctionRules?
-  incrementTiers BidIncrementTier[]
-  teams          Team[]
-  auctionPlayers AuctionPlayer[]    @relation("AuctionLots")
-  bids           Bid[]
+  rules             AuctionRules?
+  incrementTiers    BidIncrementTier[]
+  teams             Team[]
+  auctionPlayers    AuctionPlayer[]           @relation("AuctionLots")
+  bids              Bid[]
   lineupRules       LineupRules?
   allowedFormations AuctionAllowedFormation[]
 
@@ -229,12 +319,11 @@ model AuctionRules {
   id                    String  @id @default(cuid())
   auctionId             String  @unique
   auction               Auction @relation(fields: [auctionId], references: [id])
-  creditPerTeam         Decimal @db.Decimal(14, 4)
+  creditPerTeam         Decimal @db.Decimal(14, 2)
   minPlayersPerTeam     Int
   maxPlayersPerTeam     Int
-  minTeams              Int
-  maxTeams              Int
-  unsoldPrice           Decimal @db.Decimal(14, 4)
+  unsoldPrice           Decimal @db.Decimal(14, 2)
+  defaultBasePrice      Decimal @default(2) @db.Decimal(14, 2)
   defaultLotDurationSec Int     @default(30)
 }
 
@@ -242,25 +331,22 @@ model BidIncrementTier {
   id         String  @id @default(cuid())
   auctionId  String
   auction    Auction @relation(fields: [auctionId], references: [id])
-  fromAmount Decimal @db.Decimal(14, 4) // increment applies when current price >= fromAmount
-  increment  Decimal @db.Decimal(14, 4)
+  fromAmount Decimal @db.Decimal(14, 2) // increment applies when current price >= fromAmount
+  increment  Decimal @db.Decimal(14, 2)
 
   @@unique([auctionId, fromAmount])
   @@index([auctionId])
 }
 
 model Team {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   auctionId   String
-  auction     Auction @relation(fields: [auctionId], references: [id])
-  ownerUserId String
-  owner       User    @relation("TeamOwner", fields: [ownerUserId], references: [id])
-  name        String
-  shortName   String?
-  logoUrl     String?
+  auction     Auction   @relation(fields: [auctionId], references: [id])
+  franchiseId String
+  franchise   Franchise @relation(fields: [franchiseId], references: [id])
 
-  // Denormalized live tallies (updated transactionally with each win/assignment)
-  committedAmount Decimal @default(0) @db.Decimal(14, 4)
+  // Per-auction tallies (updated transactionally with each win/assignment)
+  committedAmount Decimal @default(0) @db.Decimal(14, 2)
   playerCount     Int     @default(0)
 
   createdAt DateTime @default(now())
@@ -272,30 +358,30 @@ model Team {
   leadingLots AuctionPlayer[] @relation("LotLeader")
   lineup      Lineup?
 
-  @@unique([auctionId, ownerUserId])
+  @@unique([auctionId, franchiseId])
   @@index([auctionId])
 }
 
 model AuctionPlayer {
-  id        String       @id @default(cuid())
-  auctionId String
-  auction   Auction      @relation("AuctionLots", fields: [auctionId], references: [id])
-  playerId  String
-  player    Player       @relation(fields: [playerId], references: [id])
-  basePrice Decimal      @db.Decimal(14, 4)
-  round     AuctionRound @default(MAIN)
-  status    LotStatus    @default(PENDING)
-  lotOrder  Int?
-  isOverseas Boolean     @default(false) // organizer flags overseas players (for XI cap)
+  id         String       @id @default(cuid())
+  auctionId  String
+  auction    Auction      @relation("AuctionLots", fields: [auctionId], references: [id])
+  playerId   String
+  player     Player       @relation(fields: [playerId], references: [id])
+  basePrice  Decimal      @db.Decimal(14, 2)
+  round      AuctionRound @default(MAIN)
+  status     LotStatus    @default(PENDING)
+  lotOrder   Int?
+  isOverseas Boolean      @default(false) // organizer flags overseas players (for XI cap)
 
   // Live leading state (authoritative while ON_BLOCK)
-  currentPrice  Decimal? @db.Decimal(14, 4)
+  currentPrice  Decimal? @db.Decimal(14, 2)
   leadingTeamId String?
   leadingTeam   Team?    @relation("LotLeader", fields: [leadingTeamId], references: [id])
   version       Int      @default(0) // optimistic-lock guard for concurrent bids
 
   // Final outcome
-  soldPrice    Decimal? @db.Decimal(14, 4)
+  soldPrice    Decimal? @db.Decimal(14, 2)
   soldToTeamId String?
   soldToTeam   Team?    @relation("LotWinner", fields: [soldToTeamId], references: [id])
 
@@ -323,7 +409,7 @@ model Bid {
   team            Team          @relation(fields: [teamId], references: [id])
   bidderUserId    String
   bidder          User          @relation(fields: [bidderUserId], references: [id])
-  amount          Decimal       @db.Decimal(14, 4)
+  amount          Decimal       @db.Decimal(14, 2)
   clientBidId     String? // for idempotent retries
   createdAt       DateTime      @default(now())
 
@@ -340,7 +426,7 @@ model TeamPlayer {
   auctionPlayer   AuctionPlayer   @relation(fields: [auctionPlayerId], references: [id])
   playerId        String
   player          Player          @relation(fields: [playerId], references: [id])
-  price           Decimal         @db.Decimal(14, 4)
+  price           Decimal         @db.Decimal(14, 2)
   acquiredVia     AcquisitionType
   createdAt       DateTime        @default(now())
   lineupMember    LineupMember?

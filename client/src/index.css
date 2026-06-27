@@ -1,1 +1,54 @@
 @import "tailwindcss";
+
+/* Self-hosted gaming/HUD fonts (offline-friendly via @fontsource — no CDN). */
+@import "@fontsource/chakra-petch/400.css";
+@import "@fontsource/chakra-petch/500.css";
+@import "@fontsource/chakra-petch/600.css";
+@import "@fontsource/chakra-petch/700.css";
+@import "@fontsource/rajdhani/latin-500.css";
+@import "@fontsource/rajdhani/latin-600.css";
+@import "@fontsource/rajdhani/latin-700.css";
+@import "@fontsource/rajdhani/latin-ext-500.css";
+@import "@fontsource/rajdhani/latin-ext-600.css";
+@import "@fontsource/rajdhani/latin-ext-700.css";
+
+@theme {
+  /* Display = headings, brand, badges. Stat = numeric HUD readouts. */
+  --font-display: "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+  --font-stat: "Rajdhani", "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  /* Gaming font on every heading; body text keeps the clean default sans. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: 0.015em;
+  }
+
+  /* Hide the native number-input spinner arrows everywhere. */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
+/* Condensed, uppercase, tracked label — for the brand, nav and status badges. */
+@utility hud-label {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Numeric HUD readout — timers, money and counts. Tabular so digits don't jitter. */
+@utility stat {
+  font-family: var(--font-stat);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}

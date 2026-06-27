@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { AuctionStatus, BiddingMode, AuctionRound, LotStatus } from "./auctions.js";
+import type { Sport } from "./sports.js";
+import type { CricketRole, BowlingStyle } from "./players.js";
 /** Client → server events (proposals; the server decides). */
 export declare const CLIENT_EVENTS: {
     readonly AUCTION_JOIN: "AUCTION_JOIN";
@@ -61,7 +63,7 @@ export declare const bidPlaceSchema: z.ZodObject<{
     auctionId: z.ZodString;
     auctionPlayerId: z.ZodString;
     teamId: z.ZodString;
-    amount: z.ZodString;
+    amount: z.ZodEffects<z.ZodString, string, string>;
     version: z.ZodNumber;
     clientBidId: z.ZodString;
 }, "strip", z.ZodTypeAny, {
@@ -122,6 +124,7 @@ export interface SnapshotAuction {
     status: AuctionStatus;
     round: AuctionRound;
     biddingMode: BiddingMode;
+    sport: Sport;
 }
 export interface SnapshotRules {
     creditPerTeam: string;
@@ -138,8 +141,10 @@ export interface SnapshotTeam {
     id: string;
     name: string;
     shortName: string | null;
+    primaryColor: string | null;
+    secondaryColor: string | null;
     logoUrl: string | null;
-    ownerUserId: string;
+    ownerUserId: string | null;
     committedAmount: string;
     playerCount: number;
     /** Server-computed reserve cap for this team (display only; re-checked on bid). */
@@ -186,6 +191,9 @@ export interface LiveLot {
     lotOrder: number | null;
     soldPrice: string | null;
     soldToTeamId: string | null;
+    /** Cricket attributes for section-wise grouping; null for non-cricket players. */
+    cricketRole: CricketRole | null;
+    bowlingStyle: BowlingStyle | null;
 }
 export interface LotCounts {
     PENDING: number;

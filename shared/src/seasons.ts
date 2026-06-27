@@ -32,3 +32,29 @@ export interface Season {
   auctionCount?: number;
   createdAt: string;
 }
+
+// ---- Participating franchises (which league franchises play this season) ----
+
+export const setSeasonFranchisesSchema = z.object({
+  franchiseIds: z.array(z.string().min(1)).max(64),
+});
+export type SetSeasonFranchisesInput = z.infer<typeof setSeasonFranchisesSchema>;
+
+/** A league franchise as shown on the season's selection screen. */
+export interface SeasonFranchiseOption {
+  franchiseId: string;
+  name: string;
+  shortName: string;
+  primaryColor: string;
+  secondaryColor: string | null;
+  logoUrl: string | null;
+  ownerName: string | null;
+  selected: boolean;
+}
+
+export interface SeasonFranchisesData {
+  seasonId: string;
+  /** True once an auction in this season has left DRAFT — selection is frozen. */
+  locked: boolean;
+  franchises: SeasonFranchiseOption[];
+}

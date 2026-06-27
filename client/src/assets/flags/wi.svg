@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-label="West Indies">
+  <rect width="640" height="480" fill="#7a1f2b"/>
+  <!-- rising sun with rays at the base -->
+  <g fill="#f4c20d">
+    <circle cx="320" cy="430" r="64"/>
+    <g stroke="#f4c20d" stroke-width="14" stroke-linecap="round">
+      <line x1="320" y1="430" x2="170" y2="360"/>
+      <line x1="320" y1="430" x2="220" y2="320"/>
+      <line x1="320" y1="430" x2="320" y2="300"/>
+      <line x1="320" y1="430" x2="420" y2="320"/>
+      <line x1="320" y1="430" x2="470" y2="360"/>
+    </g>
+  </g>
+  <!-- palm tree -->
+  <g fill="#1f7a3d">
+    <path d="M312 250 q8 80 0 150 h16 q-8-70 0-150 z" fill="#6b4423"/>
+    <path d="M320 250 q-90-20-150 30 q70-50 150-10 z"/>
+    <path d="M320 250 q-60-70-150-70 q90 0 150 60 z"/>
+    <path d="M320 250 q0-90 60-150 q-30 90-44 156 z"/>
+    <path d="M320 250 q60-70 150-70 q-90 0-150 60 z"/>
+    <path d="M320 250 q90-20 150 30 q-70-50-150-10 z"/>
+  </g>
+</svg>

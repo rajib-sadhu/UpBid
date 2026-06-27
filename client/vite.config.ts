@@ -5,6 +5,12 @@ import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    // Don't inline flag-icons SVGs into the CSS — emit them as files so only the
+    // flags actually displayed are fetched (keeps the CSS bundle small). Other
+    // assets keep Vite's default inlining behavior.
+    assetsInlineLimit: (filePath) => (filePath.includes("flag-icons") ? false : undefined),
+  },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -15,6 +21,12 @@ export default defineConfig({
     // Proxy API calls to the Express server in dev (avoids CORS juggling).
     proxy: {
       "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+      },
+      // Proxy uploaded files (player photos, etc.) to the API server so relative
+      // /uploads paths resolve same-origin in dev, just like /api.
+      "/uploads": {
         target: "http://localhost:4000",
         changeOrigin: true,
       },

@@ -42,18 +42,13 @@ export const auctionRulesSchema = z
     creditPerTeam: positiveMoneyString,
     minPlayersPerTeam: z.coerce.number().int().min(1),
     maxPlayersPerTeam: z.coerce.number().int().min(1),
-    minTeams: z.coerce.number().int().min(2),
-    maxTeams: z.coerce.number().int().min(2),
     unsoldPrice: moneyString,
+    defaultBasePrice: positiveMoneyString,
     defaultLotDurationSec: z.coerce.number().int().min(5).max(600).default(30),
   })
   .refine((v) => v.maxPlayersPerTeam >= v.minPlayersPerTeam, {
     message: "Max players must be ≥ min players",
     path: ["maxPlayersPerTeam"],
-  })
-  .refine((v) => v.maxTeams >= v.minTeams, {
-    message: "Max teams must be ≥ min teams",
-    path: ["maxTeams"],
   });
 export type AuctionRulesInput = z.infer<typeof auctionRulesSchema>;
 
@@ -103,9 +98,8 @@ export interface AuctionRulesDTO {
   creditPerTeam: string;
   minPlayersPerTeam: number;
   maxPlayersPerTeam: number;
-  minTeams: number;
-  maxTeams: number;
   unsoldPrice: string;
+  defaultBasePrice: string;
   defaultLotDurationSec: number;
 }
 

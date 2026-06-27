@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { Prisma } from "@prisma/client";
 import type {
   CreateAuctionInput,
   UpdateAuctionInput,
@@ -37,7 +38,7 @@ export async function listMyAuctions(req: Request, res: Response): Promise<void>
       ? {}
       : user.role === "ORGANIZER"
         ? { season: { league: { organizerId: user.id } } }
-        : { teams: { some: { ownerUserId: user.id } } };
+        : { teams: { some: { franchise: { ownerUserId: user.id } } } };
   const auctions = await prisma.auction.findMany({
     where,
     orderBy: { createdAt: "desc" },
@@ -122,8 +123,6 @@ export async function putRules(req: Request, res: Response): Promise<void> {
     creditPerTeam: money(b.creditPerTeam),
     minPlayersPerTeam: b.minPlayersPerTeam,
     maxPlayersPerTeam: b.maxPlayersPerTeam,
-    minTeams: b.minTeams,
-    maxTeams: b.maxTeams,
     unsoldPrice: money(b.unsoldPrice),
     defaultLotDurationSec: b.defaultLotDurationSec,
   };
@@ -208,31 +207,97 @@ export async function listFormations(_req: Request, res: Response): Promise<void
   res.json(formations.map(toFormation));
 }
 
-// POST /api/auctions/:id/go-live — gated transition DRAFT → LIVE.
+/**
+ * Randomize each auction player's `lotOrder` within its role group. Fisher–Yates
+ * per group; group order is preserved, so the saved sequence is role-clustered
+ * but internally shuffled. Persisted once at go-live → identical for every viewer.
+ */
+async function shuffleLotOrderByRole(tx: Prisma.TransactionClient, auctionId: string): Promise<void> {
+  const players = await tx.auctionPlayer.findMany({
+    where: { auctionId },
+    select: {
+      id: true,
+      player: { select: { cricketRole: true, footballPosition: true, role: true } },
+    },
+  });
+
+  // Group ids by role key (cricket role > football position > generic role).
+  const groups = new Map<string, string[]>();
+  for (const p of players) {
+    const key = p.player.cricketRole ?? p.player.footballPosition ?? p.player.role ?? "OTHER";
+    let ids = groups.get(key);
+    if (!ids) groups.set(key, (ids = []));
+    ids.push(p.id);
+  }
+
+  let order = 0;
+  const updates: Promise<unknown>[] = [];
+  for (const ids of groups.values()) {
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j]!, ids[i]!];
+    }
+    for (const pid of ids) {
+      updates.push(tx.auctionPlayer.update({ where: { id: pid }, data: { lotOrder: order++ } }));
+    }
+  }
+  await Promise.all(updates);
+}
+
+// POST /api/auctions/:id/go-live — gated transition DRAFT → LIVE. Materializes a
+// Team (per-auction tally) for each franchise the season selected.
 export async function goLive(req: Request, res: Response): Promise<void> {
   const id = req.params.id!;
   const ctx = await auctionContext(id);
   if (ctx.status !== "DRAFT") throw Errors.invalidState("Auction is not in DRAFT");
 
-  const [rules, teamCount, lotCount, tierCount] = await Promise.all([
+  const auction = await prisma.auction.findUniqueOrThrow({
+    where: { id },
+    select: { seasonId: true },
+  });
+  const [rules, lotCount, tierCount, seasonFranchises, existingTeams] = await Promise.all([
     prisma.auctionRules.findUnique({ where: { auctionId: id } }),
-    prisma.team.count({ where: { auctionId: id } }),
     prisma.auctionPlayer.count({ where: { auctionId: id } }),
     prisma.bidIncrementTier.count({ where: { auctionId: id } }),
+    prisma.seasonFranchise.findMany({
+      where: { seasonId: auction.seasonId },
+      select: { franchiseId: true },
+    }),
+    prisma.team.findMany({ where: { auctionId: id }, select: { franchiseId: true } }),
   ]);
   if (!rules) throw Errors.invalidState("Set the auction rules before going live");
   if (tierCount === 0)
     throw Errors.invalidState("Add at least one bid-increment tier before going live");
   if (lotCount === 0) throw Errors.invalidState("Add at least one player to the lot list");
-  if (teamCount < rules.minTeams || teamCount > rules.maxTeams) {
+
+  const teamCount = seasonFranchises.length;
+  if (teamCount < 2) {
     throw Errors.invalidState(
-      `Team count (${teamCount}) must be between ${rules.minTeams} and ${rules.maxTeams}`,
+      `An auction needs at least 2 teams (selected: ${teamCount}). ` +
+        `Pick participating teams on the season page.`,
     );
   }
-  const a = await prisma.auction.update({
-    where: { id },
-    data: { status: "LIVE" },
-    include: { _count: { select: { teams: true, auctionPlayers: true } } },
+
+  // Materialize teams from the season's franchises (idempotent).
+  const have = new Set(existingTeams.map((t) => t.franchiseId));
+  const toCreate = seasonFranchises.filter((sf) => !have.has(sf.franchiseId));
+
+  const a = await prisma.$transaction(async (tx) => {
+    if (toCreate.length) {
+      await tx.team.createMany({
+        data: toCreate.map((sf) => ({ auctionId: id, franchiseId: sf.franchiseId })),
+      });
+    }
+    // One-time shuffle: randomize lot order WITHIN each role so the live
+    // sequence isn't the database insertion order. Players are grouped by their
+    // role (cricketRole / footballPosition), shuffled inside the group, then
+    // laid out group-by-group. Runs once because go-live only fires on DRAFT→LIVE.
+    await shuffleLotOrderByRole(tx, id);
+    return tx.auction.update({
+      where: { id },
+      data: { status: "LIVE" },
+      include: { _count: { select: { teams: true, auctionPlayers: true } } },
+    });
   });
   res.json(toAuction(a));
 }

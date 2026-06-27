@@ -4,7 +4,7 @@ import type { LotStatus, AuctionRound } from "./auctions.js";
 export declare const addLotsSchema: z.ZodObject<{
     lots: z.ZodArray<z.ZodObject<{
         playerId: z.ZodString;
-        basePrice: z.ZodString;
+        basePrice: z.ZodEffects<z.ZodString, string, string>;
         isOverseas: z.ZodDefault<z.ZodBoolean>;
     }, "strip", z.ZodTypeAny, {
         playerId: string;
@@ -30,7 +30,7 @@ export declare const addLotsSchema: z.ZodObject<{
 }>;
 export type AddLotsInput = z.infer<typeof addLotsSchema>;
 export declare const updateLotSchema: z.ZodObject<{
-    basePrice: z.ZodString;
+    basePrice: z.ZodEffects<z.ZodString, string, string>;
     isOverseas: z.ZodBoolean;
     lotOrder: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {

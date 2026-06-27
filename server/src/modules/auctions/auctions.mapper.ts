@@ -30,9 +30,8 @@ export function toRules(r: AuctionRules): AuctionRulesDTO {
     creditPerTeam: moneyToWire(r.creditPerTeam),
     minPlayersPerTeam: r.minPlayersPerTeam,
     maxPlayersPerTeam: r.maxPlayersPerTeam,
-    minTeams: r.minTeams,
-    maxTeams: r.maxTeams,
     unsoldPrice: moneyToWire(r.unsoldPrice),
+    defaultBasePrice: moneyToWire(r.defaultBasePrice),
     defaultLotDurationSec: r.defaultLotDurationSec,
   };
 }

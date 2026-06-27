@@ -29,67 +29,46 @@ export declare const updateAuctionSchema: z.ZodObject<{
     biddingMode: "ORGANIZER" | "FRANCHISE";
 }>;
 export type UpdateAuctionInput = z.infer<typeof updateAuctionSchema>;
-export declare const auctionRulesSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
-    creditPerTeam: z.ZodEffects<z.ZodString, string, string>;
+export declare const auctionRulesSchema: z.ZodEffects<z.ZodObject<{
+    creditPerTeam: z.ZodEffects<z.ZodEffects<z.ZodString, string, string>, string, string>;
     minPlayersPerTeam: z.ZodNumber;
     maxPlayersPerTeam: z.ZodNumber;
-    minTeams: z.ZodNumber;
-    maxTeams: z.ZodNumber;
-    unsoldPrice: z.ZodString;
+    unsoldPrice: z.ZodEffects<z.ZodString, string, string>;
+    defaultBasePrice: z.ZodEffects<z.ZodEffects<z.ZodString, string, string>, string, string>;
     defaultLotDurationSec: z.ZodDefault<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
     creditPerTeam: string;
     minPlayersPerTeam: number;
     maxPlayersPerTeam: number;
-    minTeams: number;
-    maxTeams: number;
     unsoldPrice: string;
+    defaultBasePrice: string;
     defaultLotDurationSec: number;
 }, {
     creditPerTeam: string;
     minPlayersPerTeam: number;
     maxPlayersPerTeam: number;
-    minTeams: number;
-    maxTeams: number;
     unsoldPrice: string;
+    defaultBasePrice: string;
     defaultLotDurationSec?: number | undefined;
 }>, {
     creditPerTeam: string;
     minPlayersPerTeam: number;
     maxPlayersPerTeam: number;
-    minTeams: number;
-    maxTeams: number;
     unsoldPrice: string;
+    defaultBasePrice: string;
     defaultLotDurationSec: number;
 }, {
     creditPerTeam: string;
     minPlayersPerTeam: number;
     maxPlayersPerTeam: number;
-    minTeams: number;
-    maxTeams: number;
     unsoldPrice: string;
-    defaultLotDurationSec?: number | undefined;
-}>, {
-    creditPerTeam: string;
-    minPlayersPerTeam: number;
-    maxPlayersPerTeam: number;
-    minTeams: number;
-    maxTeams: number;
-    unsoldPrice: string;
-    defaultLotDurationSec: number;
-}, {
-    creditPerTeam: string;
-    minPlayersPerTeam: number;
-    maxPlayersPerTeam: number;
-    minTeams: number;
-    maxTeams: number;
-    unsoldPrice: string;
+    defaultBasePrice: string;
     defaultLotDurationSec?: number | undefined;
 }>;
 export type AuctionRulesInput = z.infer<typeof auctionRulesSchema>;
 export declare const incrementTierSchema: z.ZodObject<{
-    fromAmount: z.ZodString;
-    increment: z.ZodEffects<z.ZodString, string, string>;
+    fromAmount: z.ZodEffects<z.ZodString, string, string>;
+    increment: z.ZodEffects<z.ZodEffects<z.ZodString, string, string>, string, string>;
 }, "strip", z.ZodTypeAny, {
     fromAmount: string;
     increment: string;
@@ -99,8 +78,8 @@ export declare const incrementTierSchema: z.ZodObject<{
 }>;
 export declare const incrementTiersSchema: z.ZodObject<{
     tiers: z.ZodEffects<z.ZodArray<z.ZodObject<{
-        fromAmount: z.ZodString;
-        increment: z.ZodEffects<z.ZodString, string, string>;
+        fromAmount: z.ZodEffects<z.ZodString, string, string>;
+        increment: z.ZodEffects<z.ZodEffects<z.ZodString, string, string>, string, string>;
     }, "strip", z.ZodTypeAny, {
         fromAmount: string;
         increment: string;
@@ -192,9 +171,8 @@ export interface AuctionRulesDTO {
     creditPerTeam: string;
     minPlayersPerTeam: number;
     maxPlayersPerTeam: number;
-    minTeams: number;
-    maxTeams: number;
     unsoldPrice: string;
+    defaultBasePrice: string;
     defaultLotDurationSec: number;
 }
 export interface IncrementTierDTO {

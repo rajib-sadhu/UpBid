@@ -1,8 +1,9 @@
 import type { Request, Response } from "express";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import {
   playerQuerySchema,
-  listQuerySchema,
+  leaguePlayerQuerySchema,
+  FOOTBALL_DETAIL_BY_BUCKET,
   type CreatePlayerInput,
   type UpdatePlayerInput,
   type BanPlayerInput,
@@ -16,14 +17,33 @@ import { toPlayer, toLeaguePlayer } from "./players.mapper.js";
 const nz = (v: string | undefined): string | null => (v && v.length > 0 ? v : null);
 
 function playerData(body: CreatePlayerInput) {
+  const isCricket = body.sport === "CRICKET";
+  const isFootball = body.sport === "FOOTBALL";
+  // Cricket uses the structured role; the freeform `role` is dropped for cricket.
+  const cricketRole = isCricket ? body.cricketRole || null : null;
+  const footballPosition = isFootball ? body.footballPosition || null : null;
   return {
     name: body.name,
     sport: body.sport,
-    role: nz(body.role),
+    // Cricket + football use structured roles/positions; freeform role is dropped.
+    role: isCricket || isFootball ? null : nz(body.role),
     nationality: nz(body.nationality),
     externalRef: nz(body.externalRef),
     dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : null,
-    footballPosition: body.footballPosition ? body.footballPosition : null,
+    footballPosition,
+    // Detail kept only when it matches the chosen bucket.
+    footballDetailPosition:
+      footballPosition &&
+      body.footballDetailPosition &&
+      FOOTBALL_DETAIL_BY_BUCKET[footballPosition].includes(body.footballDetailPosition)
+        ? body.footballDetailPosition
+        : null,
+    // Conditional cricket fields — cleared when the role doesn't use them.
+    cricketRole,
+    battingPosition: cricketRole ? body.battingPosition || null : null,
+    bowlingStyle:
+      cricketRole === "BOWLER" || cricketRole === "ALL_ROUNDER" ? body.bowlingStyle || null : null,
+    allRounderType: cricketRole === "ALL_ROUNDER" ? body.allRounderType || null : null,
   };
 }
 
@@ -36,15 +56,20 @@ export async function listPlayers(req: Request, res: Response): Promise<void> {
     ...(query.sport ? { sport: query.sport } : {}),
     ...(query.q ? { name: { contains: query.q } } : {}),
   };
+  const orderBy = { [query.sort]: query.dir } as Prisma.PlayerOrderByWithRelationInput;
   const [rows, total] = await Promise.all([
-    prisma.player.findMany({ where, orderBy: { name: "asc" }, skip, take }),
+    prisma.player.findMany({ where, orderBy, skip, take }),
     prisma.player.count({ where }),
   ]);
   res.json(paginate(rows.map(toPlayer), total, query));
 }
 
 export async function createPlayer(req: Request, res: Response): Promise<void> {
-  const player = await prisma.player.create({ data: playerData(req.body as CreatePlayerInput) });
+  const body = req.body as CreatePlayerInput;
+  const data = playerData(body);
+  // Photo is optional: an uploaded file wins; otherwise an external URL; else none.
+  const photoUrl = req.file ? publicUrlFor(req.file.filename) : nz(body.photoUrl);
+  const player = await prisma.player.create({ data: { ...data, photoUrl } });
   res.status(201).json(toPlayer(player));
 }
 
@@ -59,9 +84,14 @@ export async function getPlayer(req: Request, res: Response): Promise<void> {
 export async function updatePlayer(req: Request, res: Response): Promise<void> {
   const id = req.params.id;
   if (!id) throw Errors.notFound();
+  const body = req.body as UpdatePlayerInput;
+  const data = playerData(body);
+  // Replace the photo only when a new URL is supplied (non-destructive otherwise;
+  // file uploads on edit go through the dedicated /:id/photo endpoint).
+  const photoUrl = nz(body.photoUrl);
   const player = await prisma.player.update({
     where: { id },
-    data: playerData(req.body as UpdatePlayerInput),
+    data: photoUrl ? { ...data, photoUrl } : data,
   });
   res.json(toPlayer(player));
 }
@@ -99,23 +129,47 @@ export async function listLeaguePlayers(req: Request, res: Response): Promise<vo
   });
   if (!league) throw Errors.notFound();
 
-  const query = listQuerySchema.parse(req.query);
+  const query = leaguePlayerQuerySchema.parse(req.query);
   const { skip, take } = toSkipTake(query);
   const where: Prisma.PlayerWhereInput = {
     sport: league.sport,
     ...(query.q ? { name: { contains: query.q } } : {}),
   };
+
+  // Ban status lives on the related PlayerLeagueStatus (per league), which Prisma
+  // can't orderBy directly. Order + paginate the IDs with a raw LEFT JOIN, then
+  // load the rows (with status) through the typed client. `dir`/`sort` come from a
+  // validated enum, so the inlined keywords are safe.
+  const dir = query.dir === "desc" ? Prisma.raw("DESC") : Prisma.raw("ASC");
+  const search = query.q ? Prisma.sql`AND p.name LIKE ${`%${query.q}%`}` : Prisma.empty;
+  const orderBy =
+    query.sort === "banned"
+      ? Prisma.sql`COALESCE(s.banned, 0) ${dir}, p.name ASC`
+      : Prisma.sql`p.name ${dir}`;
+
+  const idRows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT p.id
+    FROM \`Player\` p
+    LEFT JOIN \`PlayerLeagueStatus\` s ON s.playerId = p.id AND s.leagueId = ${leagueId}
+    WHERE p.sport = ${league.sport} ${search}
+    ORDER BY ${orderBy}
+    LIMIT ${take} OFFSET ${skip}
+  `);
+  const ids = idRows.map((r) => r.id);
+
   const [rows, total] = await Promise.all([
     prisma.player.findMany({
-      where,
-      orderBy: { name: "asc" },
-      skip,
-      take,
+      where: { id: { in: ids } },
       include: { leagueStatuses: { where: { leagueId } } },
     }),
     prisma.player.count({ where }),
   ]);
-  res.json(paginate(rows.map(toLeaguePlayer), total, query));
+  // `findMany` with `in` doesn't preserve order, so reorder to match the raw page.
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ordered = ids
+    .map((id) => byId.get(id))
+    .filter((r): r is NonNullable<typeof r> => r !== undefined);
+  res.json(paginate(ordered.map(toLeaguePlayer), total, query));
 }
 
 // PUT /api/leagues/:leagueId/players/:playerId/ban — ban/unban within a league.

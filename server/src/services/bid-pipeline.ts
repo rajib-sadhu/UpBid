@@ -37,7 +37,10 @@ export async function placeBid(user: AuthUser, payload: BidPlacePayload): Promis
 
   const [lot, team] = await Promise.all([
     prisma.auctionPlayer.findUnique({ where: { id: auctionPlayerId } }),
-    prisma.team.findUnique({ where: { id: teamId } }),
+    prisma.team.findUnique({
+      where: { id: teamId },
+      include: { franchise: { select: { ownerUserId: true } } },
+    }),
   ]);
   if (!lot || lot.auctionId !== auctionId) throw Errors.notFound("Lot not found");
   if (!team || team.auctionId !== auctionId) throw Errors.notFound("Team not found");
@@ -49,7 +52,7 @@ export async function placeBid(user: AuthUser, payload: BidPlacePayload): Promis
     if (!isAdmin && !(user.role === "ORGANIZER" && user.id === ownerId)) {
       throw Errors.forbidden("Only the organizer may bid in organizer mode");
     }
-  } else if (!isAdmin && !(user.role === "FRANCHISE" && team.ownerUserId === user.id)) {
+  } else if (!isAdmin && !(user.role === "FRANCHISE" && team.franchise.ownerUserId === user.id)) {
     throw Errors.forbidden("You can only bid for your own team");
   }
 

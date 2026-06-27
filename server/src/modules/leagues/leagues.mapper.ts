@@ -7,6 +7,7 @@ export function toLeague(l: LeagueWithCount): League {
   return {
     id: l.id,
     name: l.name,
+    shortName: l.shortName,
     sport: l.sport,
     organizerId: l.organizerId,
     seasonCount: l._count?.seasons,

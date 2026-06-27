@@ -6,15 +6,18 @@ import { Input } from "../../../components/ui/input.js";
 import { Card } from "../../../components/ui/card.js";
 
 const PAGE_SIZE = 8;
+const FALLBACK_BASE_PRICE = "2";
 
 interface Props {
   auctionId: string;
   lots: Lot[];
+  defaultBasePrice?: string;
   disabled: boolean;
   onChanged: () => void;
 }
 
-export function LotsCard({ auctionId, lots, disabled, onChanged }: Props) {
+export function LotsCard({ auctionId, lots, defaultBasePrice, disabled, onChanged }: Props) {
+  const basePrice = defaultBasePrice || FALLBACK_BASE_PRICE;
   const [available, setAvailable] = useState<Player[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -22,6 +25,7 @@ export function LotsCard({ auctionId, lots, disabled, onChanged }: Props) {
   const [prices, setPrices] = useState<Record<string, string>>({});
   const [overseas, setOverseas] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
+  const [addingAll, setAddingAll] = useState(false);
 
   const loadAvailable = useCallback(async () => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
@@ -43,7 +47,7 @@ export function LotsCard({ auctionId, lots, disabled, onChanged }: Props) {
       await apiFetch(`/api/auctions/${auctionId}/lots`, {
         method: "POST",
         body: JSON.stringify({
-          lots: [{ playerId, basePrice: prices[playerId] ?? "1", isOverseas: overseas[playerId] ?? false }],
+          lots: [{ playerId, basePrice: prices[playerId] ?? basePrice, isOverseas: overseas[playerId] ?? false }],
         }),
       });
       onChanged();
@@ -61,6 +65,42 @@ export function LotsCard({ auctionId, lots, disabled, onChanged }: Props) {
       await loadAvailable();
     } catch (e) {
       setError(e instanceof ApiClientError ? e.message : "Failed to remove lot");
+    }
+  }
+
+  async function addAllToAuction() {
+    setError(null);
+    setAddingAll(true);
+    try {
+      const allPlayers: Player[] = [];
+      let pg = 1;
+      let hasMore = true;
+      while (hasMore) {
+        const params = new URLSearchParams({ page: String(pg), pageSize: "100" });
+        const res = await apiFetch<Paginated<Player>>(
+          `/api/auctions/${auctionId}/available-players?${params.toString()}`,
+        );
+        allPlayers.push(...res.data);
+        hasMore = allPlayers.length < res.total;
+        pg++;
+      }
+      if (allPlayers.length === 0) return;
+      await apiFetch(`/api/auctions/${auctionId}/lots`, {
+        method: "POST",
+        body: JSON.stringify({
+          lots: allPlayers.map((p) => ({
+            playerId: p.id,
+            basePrice: basePrice,
+            isOverseas: false,
+          })),
+        }),
+      });
+      onChanged();
+      await loadAvailable();
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Failed to add all players");
+    } finally {
+      setAddingAll(false);
     }
   }
 
@@ -117,7 +157,18 @@ export function LotsCard({ auctionId, lots, disabled, onChanged }: Props) {
         {/* Available players to add */}
         {!disabled && (
           <div className="min-w-0">
-            <h3 className="mb-2 text-sm font-medium text-slate-300">Add players</h3>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-medium text-slate-300">Add players</h3>
+              {total > 0 && (
+                <Button
+                  variant="outline"
+                  disabled={addingAll}
+                  onClick={() => void addAllToAuction()}
+                >
+                  {addingAll ? "Adding…" : `Add all to auction (${total})`}
+                </Button>
+              )}
+            </div>
             <Input
               placeholder="Search players…"
               value={q}
@@ -133,7 +184,7 @@ export function LotsCard({ auctionId, lots, disabled, onChanged }: Props) {
                   <span className="min-w-0 flex-1 truncate text-sm">{p.name}</span>
                   <Input
                     type="text"
-                    value={prices[p.id] ?? "1"}
+                    value={prices[p.id] ?? basePrice}
                     onChange={(e) => setPrices((m) => ({ ...m, [p.id]: e.target.value }))}
                     className="w-16 px-2 py-1"
                     title="Base price (cr)"

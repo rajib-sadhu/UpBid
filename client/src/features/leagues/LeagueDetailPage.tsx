@@ -2,24 +2,44 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { createSeasonSchema } from "shared";
-import type { CreateSeasonInput, League, Season, LeaguePlayer, Paginated } from "shared";
+import { createSeasonSchema, createFranchiseSchema } from "shared";
+import type {
+  CreateSeasonInput,
+  CreateFranchiseInput,
+  League,
+  Season,
+  Franchise,
+  PublicUser,
+  LeaguePlayer,
+  LeaguePlayerSortField,
+  Paginated,
+} from "shared";
 import { apiFetch, ApiClientError } from "../../api/client.js";
 import { Button } from "../../components/ui/button.js";
 import { Input } from "../../components/ui/input.js";
+import { Select } from "../../components/ui/select.js";
 import { Label } from "../../components/ui/label.js";
 import { Card } from "../../components/ui/card.js";
+import { ColorSwatch } from "../../components/ui/color-swatch.js";
 
 const PAGE_SIZE = 10;
+const API_BASE = import.meta.env.VITE_API_URL ?? "";
+const DEFAULT_COLOR = "#1E40AF";
+const DEFAULT_SECONDARY = "#FFFFFF";
 
 export function LeagueDetailPage() {
   const { id = "" } = useParams();
   const [league, setLeague] = useState<League | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
+  const [franchises, setFranchises] = useState<Franchise[]>([]);
+  const [franchiseUsers, setFranchiseUsers] = useState<PublicUser[]>([]);
+  const [editingFranchiseId, setEditingFranchiseId] = useState<string | null>(null);
   const [players, setPlayers] = useState<LeaguePlayer[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
+  const [sortField, setSortField] = useState<LeaguePlayerSortField>("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [error, setError] = useState<string | null>(null);
 
   const {
@@ -32,20 +52,55 @@ export function LeagueDetailPage() {
     defaultValues: { name: "", startDate: "", endDate: "" },
   });
 
+  const fForm = useForm<CreateFranchiseInput>({
+    resolver: zodResolver(createFranchiseSchema),
+    defaultValues: {
+      name: "",
+      shortName: "",
+      primaryColor: DEFAULT_COLOR,
+      secondaryColor: "",
+      ownerUserId: "",
+    },
+  });
+  const secondaryColor = fForm.watch("secondaryColor");
+
   const loadLeague = useCallback(async () => {
-    setLeague(await apiFetch<League>(`/api/leagues/${id}`));
-    setSeasons(await apiFetch<Season[]>(`/api/leagues/${id}/seasons`));
+    const [lg, ss, fr, users] = await Promise.all([
+      apiFetch<League>(`/api/leagues/${id}`),
+      apiFetch<Season[]>(`/api/leagues/${id}/seasons`),
+      apiFetch<Franchise[]>(`/api/leagues/${id}/franchises`),
+      apiFetch<PublicUser[]>(`/api/users`),
+    ]);
+    setLeague(lg);
+    setSeasons(ss);
+    setFranchises(fr);
+    setFranchiseUsers(users.filter((u) => u.role === "FRANCHISE"));
   }, [id]);
 
   const loadPlayers = useCallback(async () => {
-    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(PAGE_SIZE),
+      sort: sortField,
+      dir: sortDir,
+    });
     if (q.trim()) params.set("q", q.trim());
     const res = await apiFetch<Paginated<LeaguePlayer>>(
       `/api/leagues/${id}/players?${params.toString()}`,
     );
     setPlayers(res.data);
     setTotal(res.total);
-  }, [id, page, q]);
+  }, [id, page, q, sortField, sortDir]);
+
+  function toggleSort(field: LeaguePlayerSortField) {
+    if (sortField === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+    setPage(1);
+  }
 
   useEffect(() => {
     loadLeague().catch(() => setError("Failed to load league"));
@@ -66,6 +121,71 @@ export function LeagueDetailPage() {
       await loadLeague();
     } catch (e) {
       setError(e instanceof ApiClientError ? e.message : "Failed to create season");
+    }
+  }
+
+  function startEditFranchise(f: Franchise) {
+    setEditingFranchiseId(f.id);
+    fForm.reset({
+      name: f.name,
+      shortName: f.shortName,
+      primaryColor: f.primaryColor,
+      secondaryColor: f.secondaryColor ?? "",
+      ownerUserId: f.ownerUserId ?? "",
+    });
+  }
+
+  function cancelEditFranchise() {
+    setEditingFranchiseId(null);
+    fForm.reset({
+      name: "",
+      shortName: "",
+      primaryColor: DEFAULT_COLOR,
+      secondaryColor: "",
+      ownerUserId: "",
+    });
+  }
+
+  async function onSubmitFranchise(values: CreateFranchiseInput) {
+    setError(null);
+    try {
+      const path = editingFranchiseId
+        ? `/api/leagues/${id}/franchises/${editingFranchiseId}`
+        : `/api/leagues/${id}/franchises`;
+      await apiFetch(path, {
+        method: editingFranchiseId ? "PATCH" : "POST",
+        body: JSON.stringify(values),
+      });
+      cancelEditFranchise();
+      await loadLeague();
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Failed to save team");
+    }
+  }
+
+  async function deleteFranchise(franchiseId: string) {
+    setError(null);
+    try {
+      await apiFetch(`/api/leagues/${id}/franchises/${franchiseId}`, { method: "DELETE" });
+      if (editingFranchiseId === franchiseId) cancelEditFranchise();
+      await loadLeague();
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Failed to delete team");
+    }
+  }
+
+  async function uploadFranchiseLogo(franchiseId: string, file: File) {
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("photo", file);
+      await apiFetch(`/api/leagues/${id}/franchises/${franchiseId}/logo`, {
+        method: "POST",
+        body: fd,
+      });
+      await loadLeague();
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Logo upload failed");
     }
   }
 
@@ -90,11 +210,146 @@ export function LeagueDetailPage() {
         <Link to="/leagues" className="text-sm text-indigo-400 hover:text-indigo-300">
           ← Leagues
         </Link>
-        <h1 className="mt-1 text-2xl font-semibold">{league?.name ?? "League"}</h1>
+        <h1 className="mt-1 text-2xl font-semibold">
+          {league?.name ?? "League"}
+          {league && <span className="ml-2 text-slate-500">({league.shortName})</span>}
+        </h1>
         {league && <p className="text-slate-400">{league.sport}</p>}
       </div>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
+
+      {/* Franchises — league-level team identities reused across seasons/auctions */}
+      <Card>
+        <h2 className="mb-1 font-medium">Teams / franchises ({franchises.length})</h2>
+        <p className="mb-4 text-xs text-slate-500">
+          Define each team once here; pick which ones play a given season on the season page.
+        </p>
+        <form
+          onSubmit={fForm.handleSubmit(onSubmitFranchise)}
+          className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_6rem_auto_1fr_auto] sm:items-end"
+        >
+          <div className="space-y-1">
+            <Label htmlFor="fname">Team name</Label>
+            <Input id="fname" {...fForm.register("name")} />
+            {fForm.formState.errors.name && (
+              <p className="text-xs text-red-400">{fForm.formState.errors.name.message}</p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="fshort">Short</Label>
+            <Input id="fshort" maxLength={3} className="uppercase" {...fForm.register("shortName")} />
+            {fForm.formState.errors.shortName && (
+              <p className="text-xs text-red-400">{fForm.formState.errors.shortName.message}</p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="fcolor">Colors</Label>
+            <div className="flex items-center gap-1.5">
+              <Input
+                id="fcolor"
+                type="color"
+                className="h-9 w-10 p-1"
+                title="Primary color"
+                {...fForm.register("primaryColor")}
+              />
+              {secondaryColor ? (
+                <>
+                  <Input
+                    type="color"
+                    className="h-9 w-10 p-1"
+                    title="Secondary color"
+                    {...fForm.register("secondaryColor")}
+                  />
+                  <button
+                    type="button"
+                    className="px-1 text-lg leading-none text-slate-500 hover:text-slate-300"
+                    title="Remove secondary color"
+                    onClick={() => fForm.setValue("secondaryColor", "")}
+                  >
+                    ×
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="whitespace-nowrap text-xs text-indigo-400 hover:text-indigo-300"
+                  onClick={() => fForm.setValue("secondaryColor", DEFAULT_SECONDARY)}
+                >
+                  + 2nd
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="fowner">Owner (optional)</Label>
+            <Select id="fowner" {...fForm.register("ownerUserId")}>
+              <option value="">No owner</option>
+              {franchiseUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} ({u.email})
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={fForm.formState.isSubmitting}>
+              {editingFranchiseId ? "Save" : "Add team"}
+            </Button>
+            {editingFranchiseId && (
+              <Button type="button" variant="outline" onClick={cancelEditFranchise}>
+                Cancel
+              </Button>
+            )}
+          </div>
+        </form>
+        <div className="space-y-2">
+          {franchises.map((f) => (
+            <div
+              key={f.id}
+              className="flex items-center gap-3 rounded-lg border border-slate-800 px-3 py-2"
+            >
+              <ColorSwatch primary={f.primaryColor} secondary={f.secondaryColor} />
+              <label className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded bg-slate-800 text-[9px] text-slate-500 hover:ring-2 hover:ring-indigo-400">
+                {f.logoUrl ? (
+                  <img
+                    src={`${API_BASE}${f.logoUrl}`}
+                    alt={f.name}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  "logo"
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void uploadFranchiseLogo(f.id, file);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">
+                  {f.name} <span className="text-slate-500">({f.shortName})</span>
+                </div>
+                <div className="truncate text-xs text-slate-400">{f.ownerName ?? "No owner"}</div>
+              </div>
+              <Button variant="outline" onClick={() => startEditFranchise(f)}>
+                Edit
+              </Button>
+              <Button variant="ghost" onClick={() => void deleteFranchise(f.id)}>
+                Remove
+              </Button>
+            </div>
+          ))}
+          {franchises.length === 0 && (
+            <p className="py-3 text-center text-slate-500">No teams yet.</p>
+          )}
+        </div>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Seasons */}
@@ -164,8 +419,25 @@ export function LeagueDetailPage() {
           <table className="w-full min-w-[22rem] text-left text-sm">
             <thead className="text-slate-400">
               <tr className="border-b border-slate-800">
-                <th className="pb-2 font-medium">Name</th>
-                <th className="pb-2 font-medium">Status</th>
+                {(
+                  [
+                    ["name", "Name"],
+                    ["banned", "Status"],
+                  ] as const
+                ).map(([field, label]) => (
+                  <th key={field} className="pb-2 font-medium">
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(field)}
+                      className="inline-flex items-center gap-1 hover:text-slate-100"
+                    >
+                      {label}
+                      <span className="text-[10px]">
+                        {sortField === field ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </button>
+                  </th>
+                ))}
                 <th className="pb-2 font-medium"></th>
               </tr>
             </thead>

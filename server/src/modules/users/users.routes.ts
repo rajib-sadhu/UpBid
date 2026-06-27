@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createOrganizerSchema, createFranchiseSchema } from "shared";
+import { createOrganizerSchema, createFranchiseUserSchema } from "shared";
 import { authenticate, requireRole, requireOwnership } from "../../auth/middleware.js";
 import { validateBody } from "../../middleware/validate.js";
 import { asyncHandler } from "../../lib/async-handler.js";
@@ -19,7 +19,7 @@ router.post(
 router.post(
   "/franchises",
   requireRole("ORGANIZER", "SUPER_ADMIN"),
-  validateBody(createFranchiseSchema),
+  validateBody(createFranchiseUserSchema),
   asyncHandler(ctrl.createFranchise),
 );
 

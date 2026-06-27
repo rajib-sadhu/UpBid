@@ -13,5 +13,8 @@ export const createUserSchema = z.object({
     password: z.string().min(8, "Password must be at least 8 characters"),
 });
 // Same shape today; kept as distinct names so the two endpoints can diverge later.
+// NOTE: createFranchiseUserSchema provisions a franchise USER ACCOUNT — distinct
+// from the league-level Franchise entity (franchise.ts), a team identity that such
+// a user can own.
 export const createOrganizerSchema = createUserSchema;
-export const createFranchiseSchema = createUserSchema;
+export const createFranchiseUserSchema = createUserSchema;

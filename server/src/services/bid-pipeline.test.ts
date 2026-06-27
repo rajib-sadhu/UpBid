@@ -96,14 +96,14 @@ function seed() {
     A: {
       id: "A",
       auctionId: "auc1",
-      ownerUserId: "uA",
+      franchise: { ownerUserId: "uA" },
       committedAmount: money("0"),
       playerCount: 0,
     },
     B: {
       id: "B",
       auctionId: "auc1",
-      ownerUserId: "uB",
+      franchise: { ownerUserId: "uB" },
       committedAmount: money("0"),
       playerCount: 0,
     },
@@ -143,7 +143,7 @@ describe("placeBid concurrency (optimistic CAS)", () => {
 
   it("rejects a stale-version bid and accepts the correctly-versioned next bid", async () => {
     const first = await bid("A", "uA", "2", 0);
-    expect(first.currentPrice).toBe("2.0000");
+    expect(first.currentPrice).toBe("2.00");
     expect(h.store.lot!.version).toBe(1);
 
     // Correct next amount (2.5) but asserting the stale version 0 → loses the CAS.
@@ -152,7 +152,7 @@ describe("placeBid concurrency (optimistic CAS)", () => {
 
     // Same amount at the current version 1 → accepted.
     const second = await bid("B", "uB", "2.5", 1);
-    expect(second.currentPrice).toBe("2.5000");
+    expect(second.currentPrice).toBe("2.50");
     expect(second.leadingTeamId).toBe("B");
     expect(h.store.lot!.version).toBe(2);
   });

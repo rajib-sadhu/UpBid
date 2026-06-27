@@ -16,10 +16,10 @@ export function AppLayout() {
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <header className="flex flex-wrap items-center justify-between gap-y-2 border-b border-slate-800 px-6 py-3">
         <div className="flex items-center gap-6">
-          <Link to="/" className="font-semibold">
+          <Link to="/" className="hud-label text-lg font-bold text-indigo-300">
             Sports Auction
           </Link>
-          <nav className="flex gap-4 text-sm text-slate-400">
+          <nav className="hud-label flex gap-4 text-xs text-slate-400">
             <Link to="/" className="hover:text-slate-100">
               Dashboard
             </Link>
@@ -47,7 +47,7 @@ export function AppLayout() {
           </Button>
         </div>
       </header>
-      <main className="mx-auto max-w-5xl p-6">
+      <main className="mx-auto max-w-[1600px] p-6">
         <Outlet />
       </main>
     </div>

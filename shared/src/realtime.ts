@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { moneyString } from "./money.js";
 import type { AuctionStatus, BiddingMode, AuctionRound, LotStatus } from "./auctions.js";
+import type { Sport } from "./sports.js";
+import type { CricketRole, BowlingStyle } from "./players.js";
 
 // ===========================================================================
 // Real-time auction protocol (Phase 5/6). Shared by the Socket.io gateway
@@ -104,6 +106,7 @@ export interface SnapshotAuction {
   status: AuctionStatus;
   round: AuctionRound;
   biddingMode: BiddingMode;
+  sport: Sport;
 }
 
 export interface SnapshotRules {
@@ -123,8 +126,10 @@ export interface SnapshotTeam {
   id: string;
   name: string;
   shortName: string | null;
+  primaryColor: string | null;
+  secondaryColor: string | null;
   logoUrl: string | null;
-  ownerUserId: string;
+  ownerUserId: string | null;
   committedAmount: string;
   playerCount: number;
   /** Server-computed reserve cap for this team (display only; re-checked on bid). */
@@ -174,6 +179,9 @@ export interface LiveLot {
   lotOrder: number | null;
   soldPrice: string | null;
   soldToTeamId: string | null;
+  /** Cricket attributes for section-wise grouping; null for non-cricket players. */
+  cricketRole: CricketRole | null;
+  bowlingStyle: BowlingStyle | null;
 }
 
 export interface LotCounts {

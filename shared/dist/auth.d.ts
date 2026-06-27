@@ -39,7 +39,7 @@ export declare const createOrganizerSchema: z.ZodObject<{
     password: string;
 }>;
 export type CreateOrganizerInput = CreateUserInput;
-export declare const createFranchiseSchema: z.ZodObject<{
+export declare const createFranchiseUserSchema: z.ZodObject<{
     email: z.ZodString;
     name: z.ZodString;
     password: z.ZodString;
@@ -52,7 +52,7 @@ export declare const createFranchiseSchema: z.ZodObject<{
     email: string;
     password: string;
 }>;
-export type CreateFranchiseInput = CreateUserInput;
+export type CreateFranchiseUserInput = CreateUserInput;
 /** A user as exposed over the wire — never includes passwordHash. */
 export interface PublicUser {
     id: string;

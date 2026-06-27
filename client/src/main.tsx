@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.js";
 import { AuthProvider } from "./features/auth/AuthContext.js";
+import "flag-icons/css/flag-icons.min.css";
 import "./index.css";
 
 const rootEl = document.getElementById("root");

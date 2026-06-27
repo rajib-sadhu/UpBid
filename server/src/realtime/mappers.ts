@@ -1,10 +1,24 @@
-import type { AuctionPlayer, Player, Team, AuctionRules, BidIncrementTier } from "@prisma/client";
+import type {
+  AuctionPlayer,
+  Player,
+  Team,
+  Franchise,
+  AuctionRules,
+  BidIncrementTier,
+} from "@prisma/client";
 import type { SnapshotTeam, TeamTally, CurrentLot, LiveLot, LotCounts } from "shared";
 import { moneyToWire } from "../lib/money.js";
 import { maxBid, requiredNextBid, type IncrementTier } from "../services/reserve.js";
 import type { TimerInfo } from "./timer.js";
 
 export type LotWithPlayer = AuctionPlayer & { player: Player };
+
+// Team identity (name/short/color/logo/owner) lives on the league Franchise.
+export type TeamFranchiseInfo = Pick<
+  Franchise,
+  "name" | "shortName" | "primaryColor" | "secondaryColor" | "logoUrl" | "ownerUserId"
+>;
+export type TeamWithFranchise = Team & { franchise: TeamFranchiseInfo };
 
 /** Decimal-typed increment tiers for the reserve helpers. */
 export function toIncrementTiers(tiers: BidIncrementTier[]): IncrementTier[] {
@@ -24,13 +38,15 @@ export function teamMaxBid(team: Team, rules: AuctionRules): string {
   );
 }
 
-export function toSnapshotTeam(team: Team, rules: AuctionRules | null): SnapshotTeam {
+export function toSnapshotTeam(team: TeamWithFranchise, rules: AuctionRules | null): SnapshotTeam {
   return {
     id: team.id,
-    name: team.name,
-    shortName: team.shortName,
-    logoUrl: team.logoUrl,
-    ownerUserId: team.ownerUserId,
+    name: team.franchise.name,
+    shortName: team.franchise.shortName,
+    primaryColor: team.franchise.primaryColor,
+    secondaryColor: team.franchise.secondaryColor,
+    logoUrl: team.franchise.logoUrl,
+    ownerUserId: team.franchise.ownerUserId,
     committedAmount: moneyToWire(team.committedAmount),
     playerCount: team.playerCount,
     maxBid: rules ? teamMaxBid(team, rules) : "0.0000",
@@ -83,6 +99,8 @@ export function toLiveLot(lot: LotWithPlayer): LiveLot {
     lotOrder: lot.lotOrder,
     soldPrice: lot.soldPrice ? moneyToWire(lot.soldPrice) : null,
     soldToTeamId: lot.soldToTeamId,
+    cricketRole: lot.player.cricketRole,
+    bowlingStyle: lot.player.bowlingStyle,
   };
 }
 

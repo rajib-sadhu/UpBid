@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 
-// All monetary amounts are Decimal(14,4) in CRORE units (0.5 = 50 lakh).
+// All monetary amounts are Decimal(14,2) in CRORE units (0.5 = 50 lakh).
 // Money is NEVER a JS `number` on the wire — it crosses the network as a string
 // and lives as Prisma.Decimal (decimal.js) on the server. These helpers keep
 // the reserve math (Phase 5) and money display exact.
@@ -8,16 +8,23 @@ import { Prisma } from "@prisma/client";
 export type Money = Prisma.Decimal;
 export type MoneyInput = string | number | Prisma.Decimal;
 
+/** Money is capped at 2 decimal places (crore units). */
+export const MONEY_DP = 2;
+
 export const ZERO: Money = new Prisma.Decimal(0);
 
-/** Construct a Money value. Accept number ONLY for trusted config/seed input. */
+/**
+ * Construct a Money value, rounded to 2 decimals (half-up). This is the
+ * authoritative rounding — any over-precise input is normalized here before it
+ * touches the reserve math or the database.
+ */
 export function money(value: MoneyInput): Money {
-  return new Prisma.Decimal(value);
+  return new Prisma.Decimal(value).toDecimalPlaces(MONEY_DP);
 }
 
-/** Serialize for the wire: a fixed 4-decimal string, never a float. */
+/** Serialize for the wire: a fixed 2-decimal string, never a float. */
 export function moneyToWire(value: Money): string {
-  return value.toFixed(4);
+  return value.toFixed(MONEY_DP);
 }
 
 export function add(a: Money, b: Money): Money {
