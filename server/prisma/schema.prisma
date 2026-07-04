@@ -43,6 +43,8 @@ enum AuctionStatus {
   RE_AUCTION
   ASSIGNMENT
   COMPLETED
+  SUSPENDED // whole-auction pause between lots; organizer resumes back to LIVE/RE_AUCTION
+  CANCELLED // organizer abandoned the auction; records kept for history
 }
 
 enum BiddingMode {
@@ -294,6 +296,9 @@ model Auction {
   status      AuctionStatus @default(DRAFT)
   biddingMode BiddingMode   @default(FRANCHISE)
   round       AuctionRound  @default(MAIN)
+  // Auto-pilot: when true the server bot engine is driving this auction. Gates
+  // the UI, blocks human bids, and lets a restart resume an in-flight auto-run.
+  autoPilot   Boolean       @default(false)
 
   // Live state
   currentAuctionPlayerId String?        @unique
@@ -303,13 +308,14 @@ model Auction {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  rules             AuctionRules?
-  incrementTiers    BidIncrementTier[]
-  teams             Team[]
-  auctionPlayers    AuctionPlayer[]           @relation("AuctionLots")
-  bids              Bid[]
-  lineupRules       LineupRules?
-  allowedFormations AuctionAllowedFormation[]
+  rules               AuctionRules?
+  incrementTiers      BidIncrementTier[]
+  teams               Team[]
+  auctionPlayers      AuctionPlayer[]           @relation("AuctionLots")
+  bids                Bid[]
+  lineupRules         LineupRules?
+  allowedFormations   AuctionAllowedFormation[]
+  cricketSquadTargets CricketSquadTargets?
 
   @@index([seasonId])
   @@index([status])
@@ -325,6 +331,22 @@ model AuctionRules {
   unsoldPrice           Decimal @db.Decimal(14, 2)
   defaultBasePrice      Decimal @default(2) @db.Decimal(14, 2)
   defaultLotDurationSec Int     @default(30)
+}
+
+// Per-auction cricket squad-composition targets, consumed by the auto-pilot bot
+// engine to value players and best-effort fill role minimums. Cricket-only (1:1
+// with an auction), mirroring how LineupRules holds sport-specific config.
+// "Openers" are a SUBSET of batsmen: a batsman with battingPosition = OPENER.
+model CricketSquadTargets {
+  id               String  @id @default(cuid())
+  auctionId        String  @unique
+  auction          Auction @relation(fields: [auctionId], references: [id])
+  minWicketkeepers Int     @default(1) // cricketRole = WICKETKEEPER
+  minBatsmen       Int     @default(3) // cricketRole = BATSMAN (total specialists)
+  minOpeners       Int     @default(2) // of those batsmen, battingPosition = OPENER
+  minPaceBowlers   Int     @default(2) // cricketRole = BOWLER, bowlingStyle FAST | MEDIUM_FAST
+  minSpinners      Int     @default(1) // cricketRole = BOWLER, bowlingStyle SPINNER
+  minAllRounders   Int     @default(1) // cricketRole = ALL_ROUNDER
 }
 
 model BidIncrementTier {

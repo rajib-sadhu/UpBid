@@ -6,3 +6,5 @@ export interface Nation {
 export declare const NATIONS: Nation[];
 /** Resolve a stored code to its nation entry (undefined for custom/free-text values). */
 export declare function nationByCode(code: string | null | undefined): Nation | undefined;
+/** Resolve by code first, then by name (case-insensitive). Handles both stored formats. */
+export declare function resolveNation(value: string | null | undefined): Nation | undefined;

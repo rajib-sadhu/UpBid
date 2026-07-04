@@ -1,11 +1,8 @@
-import { nationByCode } from "shared";
+import { resolveNation } from "shared";
 import wiFlag from "../../assets/flags/wi.svg";
 
-// Renders a country/team flag for a stored nationality code. Real countries use
-// the self-hosted flag-icons SVG set; West Indies uses a bundled custom asset.
-// Returns null for custom/free-text values that aren't a known code.
 export function Flag({ code, className = "" }: { code: string | null | undefined; className?: string }) {
-  const nation = nationByCode(code);
+  const nation = resolveNation(code);
   if (!nation) return null;
   if (nation.fi === "wi") {
     return (

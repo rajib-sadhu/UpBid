@@ -22,5 +22,12 @@ export function toLot(l: LotWithPlayer): Lot {
 }
 
 export function toFormation(f: PrismaFormation): Formation {
-  return { id: f.id, name: f.name, numGK: f.numGK, numDef: f.numDef, numMid: f.numMid, numFwd: f.numFwd };
+  return {
+    id: f.id,
+    name: f.name,
+    numGK: f.numGK,
+    numDef: f.numDef,
+    numMid: f.numMid,
+    numFwd: f.numFwd,
+  };
 }

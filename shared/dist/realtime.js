@@ -12,14 +12,26 @@ export const CLIENT_EVENTS = {
     AUCTION_JOIN: "AUCTION_JOIN",
     AUCTION_LEAVE: "AUCTION_LEAVE",
     BID_PLACE: "BID_PLACE",
+    BID_UNDO: "BID_UNDO",
+    BID_RESET: "BID_RESET",
     LOT_OPEN: "LOT_OPEN",
     LOT_SELL: "LOT_SELL",
     LOT_MARK_UNSOLD: "LOT_MARK_UNSOLD",
+    LOT_REBID: "LOT_REBID",
+    SALE_REVERSE: "SALE_REVERSE",
     TIMER_ADD: "TIMER_ADD",
     TIMER_PAUSE: "TIMER_PAUSE",
     TIMER_RESUME: "TIMER_RESUME",
     PHASE_ADVANCE: "PHASE_ADVANCE",
     ASSIGN_PLAYER: "ASSIGN_PLAYER",
+    // Auto-pilot: organizer hands the whole auction to the server bot engine.
+    // There is no separate stop event — AUCTION_SUSPEND / AUCTION_CANCEL are the
+    // kill-switch that breaks the loop.
+    AUTO_START: "AUTO_START",
+    // Whole-auction lifecycle (organizer; broadcast a fresh snapshot).
+    AUCTION_SUSPEND: "AUCTION_SUSPEND",
+    AUCTION_RESUME: "AUCTION_RESUME",
+    AUCTION_CANCEL: "AUCTION_CANCEL",
 };
 /** Server → client events (past-tense facts; carry a monotonic `seq`). */
 export const SERVER_EVENTS = {
@@ -34,6 +46,9 @@ export const SERVER_EVENTS = {
     TIMER_PAUSED: "TIMER_PAUSED",
     TIMER_RESUMED: "TIMER_RESUMED",
     PHASE_CHANGED: "PHASE_CHANGED",
+    // Auto-pilot finished (reached COMPLETED or stopped short); carries the
+    // best-effort squad-composition report.
+    AUTO_FINISHED: "AUTO_FINISHED",
     ERROR: "ERROR",
 };
 // ---- Shared enums ----------------------------------------------------------
@@ -67,3 +82,14 @@ export const assignPlayerSchema = z.object({
     auctionPlayerId: z.string().min(1),
     teamId: z.string().min(1),
 });
+export const autoStartSchema = z.object({ auctionId: z.string().min(1) });
+// ---- Auto-pilot report -----------------------------------------------------
+/** A single squad-composition role line in the best-effort auto-pilot report. */
+export const SQUAD_ROLE_KEYS = [
+    "WICKETKEEPER",
+    "BATSMAN",
+    "OPENER",
+    "PACE_BOWLER",
+    "SPINNER",
+    "ALL_ROUNDER",
+];

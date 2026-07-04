@@ -108,7 +108,14 @@ const OTHER_NATIONS = [
 ];
 export const NATIONS = [...CRICKET_NATIONS, ...OTHER_NATIONS];
 const BY_CODE = new Map(NATIONS.map((x) => [x.code, x]));
+const BY_NAME = new Map(NATIONS.map((x) => [x.name.toLowerCase(), x]));
 /** Resolve a stored code to its nation entry (undefined for custom/free-text values). */
 export function nationByCode(code) {
     return code ? BY_CODE.get(code) : undefined;
+}
+/** Resolve by code first, then by name (case-insensitive). Handles both stored formats. */
+export function resolveNation(value) {
+    if (!value)
+        return undefined;
+    return BY_CODE.get(value) ?? BY_NAME.get(value.toLowerCase());
 }

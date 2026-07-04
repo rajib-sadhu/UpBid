@@ -19,6 +19,7 @@ import {
   type TimerPausedEvent,
   type TimerResumedEvent,
   type PhaseChangedEvent,
+  type AutoFinishedEvent,
   type SocketErrorEvent,
 } from "shared";
 import { getSocket } from "./socket.js";
@@ -31,16 +32,26 @@ export interface AuctionRoom {
   /** Last bid rejection (for the current user), surfaced for inline feedback. */
   lastReject: BidRejectedEvent | null;
   lastError: SocketErrorEvent | null;
+  /** The best-effort squad report emitted when an auto-pilot run finishes. */
+  autoReport: AutoFinishedEvent | null;
   // Actions (organizer / franchise depending on role + mode; server re-checks).
   placeBid: (lot: CurrentLot, teamId: string) => void;
+  undoLastBid: () => void;
+  resetBidding: () => void;
   openLot: (auctionPlayerId: string) => void;
   sellLot: (auctionPlayerId: string) => void;
   markUnsold: (auctionPlayerId: string) => void;
+  reverseLastSale: () => void;
+  rebidLot: (auctionPlayerId: string) => void;
   addTime: (seconds: number) => void;
   pause: () => void;
   resume: () => void;
   advancePhase: (to: PhaseTarget) => void;
   assignPlayer: (auctionPlayerId: string, teamId: string) => void;
+  startAutoPilot: () => void;
+  suspendAuction: () => void;
+  resumeAuction: () => void;
+  cancelAuction: () => void;
 }
 
 function applyTally(teams: SnapshotTeam[], tally: TeamTally): SnapshotTeam[] {
@@ -79,6 +90,7 @@ export function useAuctionRoom(auctionId: string | undefined): AuctionRoom {
   const [conn, setConn] = useState<ConnState>("connecting");
   const [lastReject, setLastReject] = useState<BidRejectedEvent | null>(null);
   const [lastError, setLastError] = useState<SocketErrorEvent | null>(null);
+  const [autoReport, setAutoReport] = useState<AutoFinishedEvent | null>(null);
   const seqRef = useRef(0);
 
   const join = useCallback(() => {
@@ -181,6 +193,9 @@ export function useAuctionRoom(auctionId: string | undefined): AuctionRoom {
           ...s,
           auction: { ...s.auction, status: ev.status, round: ev.round },
         })),
+      // Terminal info, not a state delta — just stash the report. The snapshot
+      // that follows resets seqRef and lifts the view-only lock.
+      [SERVER_EVENTS.AUTO_FINISHED]: (ev: AutoFinishedEvent) => setAutoReport(ev),
       [SERVER_EVENTS.ERROR]: (ev: SocketErrorEvent) => setLastError(ev),
     };
 
@@ -241,15 +256,39 @@ export function useAuctionRoom(auctionId: string | undefined): AuctionRoom {
     conn,
     lastReject,
     lastError,
+    autoReport,
     placeBid,
+    undoLastBid: () => {
+      if (auctionId) {
+        setLastReject(null);
+        emit(CLIENT_EVENTS.BID_UNDO, { auctionId });
+      }
+    },
+    resetBidding: () => {
+      if (auctionId) {
+        setLastReject(null);
+        emit(CLIENT_EVENTS.BID_RESET, { auctionId });
+      }
+    },
     openLot: (id) => lotAction(CLIENT_EVENTS.LOT_OPEN, id),
     sellLot: (id) => lotAction(CLIENT_EVENTS.LOT_SELL, id),
     markUnsold: (id) => lotAction(CLIENT_EVENTS.LOT_MARK_UNSOLD, id),
+    reverseLastSale: () => auctionId && emit(CLIENT_EVENTS.SALE_REVERSE, { auctionId }),
+    rebidLot: (id) => lotAction(CLIENT_EVENTS.LOT_REBID, id),
     addTime: (seconds) => auctionId && emit(CLIENT_EVENTS.TIMER_ADD, { auctionId, seconds }),
     pause: () => auctionId && emit(CLIENT_EVENTS.TIMER_PAUSE, { auctionId }),
     resume: () => auctionId && emit(CLIENT_EVENTS.TIMER_RESUME, { auctionId }),
     advancePhase: (to) => auctionId && emit(CLIENT_EVENTS.PHASE_ADVANCE, { auctionId, to }),
     assignPlayer: (auctionPlayerId, teamId) =>
       auctionId && emit(CLIENT_EVENTS.ASSIGN_PLAYER, { auctionId, auctionPlayerId, teamId }),
+    startAutoPilot: () => {
+      if (auctionId) {
+        setAutoReport(null);
+        emit(CLIENT_EVENTS.AUTO_START, { auctionId });
+      }
+    },
+    suspendAuction: () => auctionId && emit(CLIENT_EVENTS.AUCTION_SUSPEND, { auctionId }),
+    resumeAuction: () => auctionId && emit(CLIENT_EVENTS.AUCTION_RESUME, { auctionId }),
+    cancelAuction: () => auctionId && emit(CLIENT_EVENTS.AUCTION_CANCEL, { auctionId }),
   };
 }

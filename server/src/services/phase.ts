@@ -74,3 +74,78 @@ export async function advancePhase(
   });
   return { status: updated.status, round: updated.round };
 }
+
+/**
+ * Suspend a live auction (whole-auction pause, distinct from the per-lot timer
+ * pause). Requires an empty block — finalize the current lot first — so a resume
+ * always re-enters cleanly between lots. The round is preserved; resume reads it
+ * back. Caller rebroadcasts a fresh snapshot.
+ */
+export async function suspendAuction(auctionId: string): Promise<void> {
+  const auction = await prisma.auction.findUnique({
+    where: { id: auctionId },
+    select: { status: true, currentAuctionPlayerId: true },
+  });
+  if (!auction) throw Errors.notFound("Auction not found");
+  if (auction.status !== "LIVE" && auction.status !== "RE_AUCTION") {
+    throw Errors.invalidState("Only a live auction can be suspended");
+  }
+  if (auction.currentAuctionPlayerId) {
+    throw Errors.invalidState("Finalize the current lot before suspending the auction");
+  }
+  await prisma.auction.update({
+    where: { id: auctionId },
+    data: { status: "SUSPENDED", currentLotEndsAt: null, autoPilot: false },
+  });
+  timer.stop(auctionId);
+}
+
+/**
+ * Resume a suspended auction back to its live round (LIVE for a MAIN round,
+ * RE_AUCTION for a re-auction round). No lot is on the block, so no timer is
+ * armed — the organizer opens the next lot. Caller rebroadcasts a snapshot.
+ */
+export async function resumeAuction(auctionId: string): Promise<void> {
+  const auction = await prisma.auction.findUnique({
+    where: { id: auctionId },
+    select: { status: true, round: true },
+  });
+  if (!auction) throw Errors.notFound("Auction not found");
+  if (auction.status !== "SUSPENDED") {
+    throw Errors.invalidState("Only a suspended auction can be resumed");
+  }
+  await prisma.auction.update({
+    where: { id: auctionId },
+    data: { status: auction.round === "RE_AUCTION" ? "RE_AUCTION" : "LIVE" },
+  });
+}
+
+/**
+ * Cancel (abandon) an auction. Soft: the auction is marked CANCELLED and dropped
+ * from the live/active lists, but all records — teams, bids, sales — are kept for
+ * history. Any lot on the block is cleared and the timer stopped. Terminal;
+ * cannot be reversed through the normal flow. Caller rebroadcasts a snapshot.
+ */
+export async function cancelAuction(auctionId: string): Promise<void> {
+  const auction = await prisma.auction.findUnique({
+    where: { id: auctionId },
+    select: { status: true },
+  });
+  if (!auction) throw Errors.notFound("Auction not found");
+  if (auction.status === "COMPLETED" || auction.status === "CANCELLED") {
+    throw Errors.invalidState("This auction is already finished");
+  }
+  if (auction.status === "DRAFT") {
+    throw Errors.invalidState("Delete a draft auction instead of cancelling it");
+  }
+  await prisma.auction.update({
+    where: { id: auctionId },
+    data: {
+      status: "CANCELLED",
+      currentAuctionPlayerId: null,
+      currentLotEndsAt: null,
+      autoPilot: false,
+    },
+  });
+  timer.stop(auctionId);
+}

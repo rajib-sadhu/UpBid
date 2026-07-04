@@ -9,6 +9,8 @@ export const AUCTION_STATUSES = [
   "RE_AUCTION",
   "ASSIGNMENT",
   "COMPLETED",
+  "SUSPENDED",
+  "CANCELLED",
 ] as const;
 export type AuctionStatus = (typeof AUCTION_STATUSES)[number];
 
@@ -92,6 +94,25 @@ export const lineupRulesSchema = z
   });
 export type LineupRulesInput = z.infer<typeof lineupRulesSchema>;
 
+// ---- Cricket squad targets (auto-pilot) ------------------------------------
+
+// Auto-pilot squad-composition targets. Openers are a SUBSET of batsmen, so the
+// opener target may not exceed the total batsmen target.
+export const cricketSquadTargetsSchema = z
+  .object({
+    minWicketkeepers: z.coerce.number().int().min(0).max(11).default(1),
+    minBatsmen: z.coerce.number().int().min(0).max(11).default(3),
+    minOpeners: z.coerce.number().int().min(0).max(11).default(2),
+    minPaceBowlers: z.coerce.number().int().min(0).max(11).default(2),
+    minSpinners: z.coerce.number().int().min(0).max(11).default(1),
+    minAllRounders: z.coerce.number().int().min(0).max(11).default(1),
+  })
+  .refine((v) => v.minOpeners <= v.minBatsmen, {
+    message: "Openers cannot exceed the total batsmen target",
+    path: ["minOpeners"],
+  });
+export type CricketSquadTargetsInput = z.infer<typeof cricketSquadTargetsSchema>;
+
 // ---- DTOs ------------------------------------------------------------------
 
 export interface AuctionRulesDTO {
@@ -107,6 +128,15 @@ export interface IncrementTierDTO {
   id: string;
   fromAmount: string;
   increment: string;
+}
+
+export interface CricketSquadTargetsDTO {
+  minWicketkeepers: number;
+  minBatsmen: number;
+  minOpeners: number;
+  minPaceBowlers: number;
+  minSpinners: number;
+  minAllRounders: number;
 }
 
 export interface LineupRulesDTO {
@@ -130,9 +160,13 @@ export interface Auction {
   status: AuctionStatus;
   biddingMode: BiddingMode;
   round: AuctionRound;
+  autoPilot: boolean;
   createdAt: string;
   teamCount?: number;
   lotCount?: number;
+  sport?: string;
+  leagueName?: string;
+  seasonName?: string;
 }
 
 /** Full auction config for the DRAFT setup screen. */
@@ -141,6 +175,7 @@ export interface AuctionDetail extends Auction {
   leagueId: string;
   rules: AuctionRulesDTO | null;
   lineupRules: LineupRulesDTO | null;
+  cricketSquadTargets: CricketSquadTargetsDTO | null;
   incrementTiers: IncrementTierDTO[];
   allowedFormationIds: string[];
 }

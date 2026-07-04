@@ -8,6 +8,8 @@ export const AUCTION_STATUSES = [
     "RE_AUCTION",
     "ASSIGNMENT",
     "COMPLETED",
+    "SUSPENDED",
+    "CANCELLED",
 ];
 export const BIDDING_MODES = ["ORGANIZER", "FRANCHISE"];
 export const AUCTION_ROUNDS = ["MAIN", "RE_AUCTION", "ASSIGNMENT"];
@@ -68,4 +70,20 @@ export const lineupRulesSchema = z
     .refine((v) => !v.overseasCapEnabled || typeof v.maxOverseasInXI === "number", {
     message: "Set the max overseas in XI when the cap is enabled",
     path: ["maxOverseasInXI"],
+});
+// ---- Cricket squad targets (auto-pilot) ------------------------------------
+// Auto-pilot squad-composition targets. Openers are a SUBSET of batsmen, so the
+// opener target may not exceed the total batsmen target.
+export const cricketSquadTargetsSchema = z
+    .object({
+    minWicketkeepers: z.coerce.number().int().min(0).max(11).default(1),
+    minBatsmen: z.coerce.number().int().min(0).max(11).default(3),
+    minOpeners: z.coerce.number().int().min(0).max(11).default(2),
+    minPaceBowlers: z.coerce.number().int().min(0).max(11).default(2),
+    minSpinners: z.coerce.number().int().min(0).max(11).default(1),
+    minAllRounders: z.coerce.number().int().min(0).max(11).default(1),
+})
+    .refine((v) => v.minOpeners <= v.minBatsmen, {
+    message: "Openers cannot exceed the total batsmen target",
+    path: ["minOpeners"],
 });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SPORTS, FOOTBALL_POSITIONS, FOOTBALL_DETAIL_POSITIONS, FOOTBALL_DETAIL_BY_BUCKET } from "./sports.js";
+import { SPORTS, FOOTBALL_POSITIONS, FOOTBALL_DETAIL_POSITIONS, FOOTBALL_DETAIL_BY_BUCKET, } from "./sports.js";
 import { listQuerySchema } from "./pagination.js";
 // ---- Cricket attribute enums ----------------------------------------------
 // Structured cricket player data. The playing role is chosen first; the other
@@ -127,7 +127,12 @@ export const createPlayerSchema = z
     }
     else {
         // Cricket fields must not be set on non-cricket players.
-        for (const f of ["cricketRole", "battingPosition", "bowlingStyle", "allRounderType"]) {
+        for (const f of [
+            "cricketRole",
+            "battingPosition",
+            "bowlingStyle",
+            "allRounderType",
+        ]) {
             if (v[f])
                 issue(f, "Cricket fields only apply to cricket players");
         }

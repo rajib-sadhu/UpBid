@@ -2,7 +2,8 @@ import { z } from "zod";
 import { moneyString } from "./money.js";
 import type { AuctionStatus, BiddingMode, AuctionRound, LotStatus } from "./auctions.js";
 import type { Sport } from "./sports.js";
-import type { CricketRole, BowlingStyle } from "./players.js";
+import type { CricketRole, BowlingStyle, BattingPosition, AllRounderType } from "./players.js";
+import type { FootballPosition, FootballDetailPosition } from "./sports.js";
 
 // ===========================================================================
 // Real-time auction protocol (Phase 5/6). Shared by the Socket.io gateway
@@ -18,14 +19,26 @@ export const CLIENT_EVENTS = {
   AUCTION_JOIN: "AUCTION_JOIN",
   AUCTION_LEAVE: "AUCTION_LEAVE",
   BID_PLACE: "BID_PLACE",
+  BID_UNDO: "BID_UNDO",
+  BID_RESET: "BID_RESET",
   LOT_OPEN: "LOT_OPEN",
   LOT_SELL: "LOT_SELL",
   LOT_MARK_UNSOLD: "LOT_MARK_UNSOLD",
+  LOT_REBID: "LOT_REBID",
+  SALE_REVERSE: "SALE_REVERSE",
   TIMER_ADD: "TIMER_ADD",
   TIMER_PAUSE: "TIMER_PAUSE",
   TIMER_RESUME: "TIMER_RESUME",
   PHASE_ADVANCE: "PHASE_ADVANCE",
   ASSIGN_PLAYER: "ASSIGN_PLAYER",
+  // Auto-pilot: organizer hands the whole auction to the server bot engine.
+  // There is no separate stop event — AUCTION_SUSPEND / AUCTION_CANCEL are the
+  // kill-switch that breaks the loop.
+  AUTO_START: "AUTO_START",
+  // Whole-auction lifecycle (organizer; broadcast a fresh snapshot).
+  AUCTION_SUSPEND: "AUCTION_SUSPEND",
+  AUCTION_RESUME: "AUCTION_RESUME",
+  AUCTION_CANCEL: "AUCTION_CANCEL",
 } as const;
 export type ClientEvent = (typeof CLIENT_EVENTS)[keyof typeof CLIENT_EVENTS];
 
@@ -42,6 +55,9 @@ export const SERVER_EVENTS = {
   TIMER_PAUSED: "TIMER_PAUSED",
   TIMER_RESUMED: "TIMER_RESUMED",
   PHASE_CHANGED: "PHASE_CHANGED",
+  // Auto-pilot finished (reached COMPLETED or stopped short); carries the
+  // best-effort squad-composition report.
+  AUTO_FINISHED: "AUTO_FINISHED",
   ERROR: "ERROR",
 } as const;
 export type ServerEvent = (typeof SERVER_EVENTS)[keyof typeof SERVER_EVENTS];
@@ -98,6 +114,9 @@ export const assignPlayerSchema = z.object({
 });
 export type AssignPlayerPayload = z.infer<typeof assignPlayerSchema>;
 
+export const autoStartSchema = z.object({ auctionId: z.string().min(1) });
+export type AutoStartPayload = z.infer<typeof autoStartSchema>;
+
 // ---- Server → client DTOs --------------------------------------------------
 
 export interface SnapshotAuction {
@@ -107,6 +126,8 @@ export interface SnapshotAuction {
   round: AuctionRound;
   biddingMode: BiddingMode;
   sport: Sport;
+  /** True while the server bot engine is driving this auction (UI is view-only). */
+  autoPilot: boolean;
 }
 
 export interface SnapshotRules {
@@ -151,6 +172,16 @@ export interface CurrentLot {
   photoUrl: string | null;
   isOverseas: boolean;
   basePrice: string;
+  /** Player attributes for the on-the-block board card (display only). */
+  sport: Sport;
+  nationality: string | null;
+  role: string | null;
+  cricketRole: CricketRole | null;
+  battingPosition: BattingPosition | null;
+  bowlingStyle: BowlingStyle | null;
+  allRounderType: AllRounderType | null;
+  footballPosition: FootballPosition | null;
+  footballDetailPosition: FootballDetailPosition | null;
   status: LotStatus;
   round: AuctionRound;
   /** null before the first bid → the next required bid is basePrice. */
@@ -280,6 +311,45 @@ export interface PhaseChangedEvent {
   seq: number;
   status: AuctionStatus;
   round: AuctionRound;
+}
+
+// ---- Auto-pilot report -----------------------------------------------------
+
+/** A single squad-composition role line in the best-effort auto-pilot report. */
+export const SQUAD_ROLE_KEYS = [
+  "WICKETKEEPER",
+  "BATSMAN",
+  "OPENER",
+  "PACE_BOWLER",
+  "SPINNER",
+  "ALL_ROUNDER",
+] as const;
+export type SquadRoleKey = (typeof SQUAD_ROLE_KEYS)[number];
+
+export interface SquadRoleReport {
+  role: SquadRoleKey;
+  required: number;
+  got: number;
+  /** max(0, required - got) — how many of this role the team fell short by. */
+  short: number;
+}
+
+export interface TeamSquadReport {
+  teamId: string;
+  teamName: string;
+  playerCount: number;
+  /** Whether the team reached minPlayersPerTeam (a hard requirement). */
+  minPlayersMet: boolean;
+  roles: SquadRoleReport[];
+}
+
+export interface AutoFinishedEvent {
+  seq: number;
+  status: AuctionStatus;
+  round: AuctionRound;
+  /** True if the run reached COMPLETED; false if it stopped short (pool too small / aborted). */
+  completed: boolean;
+  report: TeamSquadReport[];
 }
 
 /** Sent only to the offending socket — a protocol/authz fault. */

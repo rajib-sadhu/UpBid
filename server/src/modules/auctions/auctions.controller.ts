@@ -5,6 +5,7 @@ import type {
   UpdateAuctionInput,
   AuctionRulesInput,
   LineupRulesInput,
+  CricketSquadTargetsInput,
   IncrementTiersInput,
   AllowedFormationsInput,
   AuctionDetail,
@@ -13,8 +14,15 @@ import { prisma } from "../../lib/prisma.js";
 import { Errors } from "../../lib/errors.js";
 import { money } from "../../lib/money.js";
 import { auctionContext, assertDraft } from "./auctions.service.js";
-import { toAuction, toRules, toLineupRules, toTier } from "./auctions.mapper.js";
+import {
+  toAuction,
+  toRules,
+  toLineupRules,
+  toCricketSquadTargets,
+  toTier,
+} from "./auctions.mapper.js";
 import { toFormation } from "./lots.mapper.js";
+import * as timer from "../../realtime/timer.js";
 
 // POST /api/seasons/:seasonId/auctions
 export async function createAuction(req: Request, res: Response): Promise<void> {
@@ -42,7 +50,10 @@ export async function listMyAuctions(req: Request, res: Response): Promise<void>
   const auctions = await prisma.auction.findMany({
     where,
     orderBy: { createdAt: "desc" },
-    include: { _count: { select: { teams: true, auctionPlayers: true } } },
+    include: {
+      season: { select: { name: true, league: { select: { name: true, sport: true } } } },
+      _count: { select: { teams: true, auctionPlayers: true } },
+    },
   });
   res.json(auctions.map(toAuction));
 }
@@ -68,9 +79,10 @@ export async function getAuction(req: Request, res: Response): Promise<void> {
     include: {
       rules: true,
       lineupRules: true,
+      cricketSquadTargets: true,
       incrementTiers: { orderBy: { fromAmount: "asc" } },
       allowedFormations: { select: { formationId: true } },
-      season: { select: { league: { select: { id: true, sport: true } } } },
+      season: { select: { name: true, league: { select: { id: true, name: true, sport: true } } } },
       _count: { select: { teams: true, auctionPlayers: true } },
     },
   });
@@ -81,6 +93,9 @@ export async function getAuction(req: Request, res: Response): Promise<void> {
     leagueId: a.season.league.id,
     rules: a.rules ? toRules(a.rules) : null,
     lineupRules: a.lineupRules ? toLineupRules(a.lineupRules) : null,
+    cricketSquadTargets: a.cricketSquadTargets
+      ? toCricketSquadTargets(a.cricketSquadTargets)
+      : null,
     incrementTiers: a.incrementTiers.map(toTier),
     allowedFormationIds: a.allowedFormations.map((f) => f.formationId),
   };
@@ -99,16 +114,30 @@ export async function updateAuction(req: Request, res: Response): Promise<void> 
   res.json(toAuction(a));
 }
 
+// DELETE /api/auctions/:id — permanent hard-delete, allowed in ANY status (a
+// live auction's bids/sales/teams are all wiped — unrecoverable). For a soft
+// end that keeps records, use the in-room "Cancel auction" action instead.
 export async function deleteAuction(req: Request, res: Response): Promise<void> {
   const id = req.params.id!;
-  assertDraft(await auctionContext(id));
+  // Existence/ownership check (no DRAFT gate — any status is deletable now).
+  await auctionContext(id);
+  // Stop any live lot timer so a stray tick can't fire on a deleted auction.
+  timer.stop(id);
   await prisma.$transaction([
+    // Release the live-lot FK before deleting auction players.
+    prisma.auction.update({ where: { id }, data: { currentAuctionPlayerId: null } }),
+    // Children first (no onDelete cascade is declared on these relations).
+    prisma.lineupMember.deleteMany({ where: { lineup: { team: { auctionId: id } } } }),
+    prisma.lineup.deleteMany({ where: { team: { auctionId: id } } }),
+    prisma.teamPlayer.deleteMany({ where: { team: { auctionId: id } } }),
+    prisma.bid.deleteMany({ where: { auctionId: id } }),
     prisma.bidIncrementTier.deleteMany({ where: { auctionId: id } }),
     prisma.auctionAllowedFormation.deleteMany({ where: { auctionId: id } }),
     prisma.auctionPlayer.deleteMany({ where: { auctionId: id } }),
     prisma.team.deleteMany({ where: { auctionId: id } }),
     prisma.auctionRules.deleteMany({ where: { auctionId: id } }),
     prisma.lineupRules.deleteMany({ where: { auctionId: id } }),
+    prisma.cricketSquadTargets.deleteMany({ where: { auctionId: id } }),
     prisma.auction.delete({ where: { id } }),
   ]);
   res.status(204).end();
@@ -132,6 +161,27 @@ export async function putRules(req: Request, res: Response): Promise<void> {
     update: data,
   });
   res.json(toRules(rules));
+}
+
+// PUT /api/auctions/:id/cricket-squad-targets — auto-pilot composition targets.
+export async function putCricketSquadTargets(req: Request, res: Response): Promise<void> {
+  const id = req.params.id!;
+  assertDraft(await auctionContext(id));
+  const b = req.body as CricketSquadTargetsInput;
+  const data = {
+    minWicketkeepers: b.minWicketkeepers,
+    minBatsmen: b.minBatsmen,
+    minOpeners: b.minOpeners,
+    minPaceBowlers: b.minPaceBowlers,
+    minSpinners: b.minSpinners,
+    minAllRounders: b.minAllRounders,
+  };
+  const targets = await prisma.cricketSquadTargets.upsert({
+    where: { auctionId: id },
+    create: { auctionId: id, ...data },
+    update: data,
+  });
+  res.json(toCricketSquadTargets(targets));
 }
 
 // PUT /api/auctions/:id/lineup-rules
@@ -212,7 +262,10 @@ export async function listFormations(_req: Request, res: Response): Promise<void
  * per group; group order is preserved, so the saved sequence is role-clustered
  * but internally shuffled. Persisted once at go-live → identical for every viewer.
  */
-async function shuffleLotOrderByRole(tx: Prisma.TransactionClient, auctionId: string): Promise<void> {
+async function shuffleLotOrderByRole(
+  tx: Prisma.TransactionClient,
+  auctionId: string,
+): Promise<void> {
   const players = await tx.auctionPlayer.findMany({
     where: { auctionId },
     select: {

@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { SPORTS, FOOTBALL_POSITIONS, FOOTBALL_DETAIL_POSITIONS, FOOTBALL_DETAIL_BY_BUCKET } from "./sports.js";
+import {
+  SPORTS,
+  FOOTBALL_POSITIONS,
+  FOOTBALL_DETAIL_POSITIONS,
+  FOOTBALL_DETAIL_BY_BUCKET,
+} from "./sports.js";
 import type { Sport, FootballPosition, FootballDetailPosition } from "./sports.js";
 import { listQuerySchema } from "./pagination.js";
 
@@ -149,7 +154,12 @@ export const createPlayerSchema = z
       }
     } else {
       // Cricket fields must not be set on non-cricket players.
-      for (const f of ["cricketRole", "battingPosition", "bowlingStyle", "allRounderType"] as const) {
+      for (const f of [
+        "cricketRole",
+        "battingPosition",
+        "bowlingStyle",
+        "allRounderType",
+      ] as const) {
         if (v[f]) issue(f, "Cricket fields only apply to cricket players");
       }
     }
@@ -160,7 +170,9 @@ export const createPlayerSchema = z
         issue("footballPosition", "Position is required");
       } else if (!v.footballDetailPosition) {
         issue("footballDetailPosition", "Detailed position is required");
-      } else if (!FOOTBALL_DETAIL_BY_BUCKET[v.footballPosition].includes(v.footballDetailPosition)) {
+      } else if (
+        !FOOTBALL_DETAIL_BY_BUCKET[v.footballPosition].includes(v.footballDetailPosition)
+      ) {
         issue("footballDetailPosition", "Detailed position doesn't match the selected position");
       }
     } else if (v.footballDetailPosition) {

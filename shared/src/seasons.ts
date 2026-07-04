@@ -14,10 +14,10 @@ export const createSeasonSchema = z
     startDate: dateString,
     endDate: dateString,
   })
-  .refine(
-    (v) => !v.startDate || !v.endDate || v.startDate <= v.endDate,
-    { message: "End date must be on or after start date", path: ["endDate"] },
-  );
+  .refine((v) => !v.startDate || !v.endDate || v.startDate <= v.endDate, {
+    message: "End date must be on or after start date",
+    path: ["endDate"],
+  });
 export type CreateSeasonInput = z.infer<typeof createSeasonSchema>;
 
 export const updateSeasonSchema = createSeasonSchema;

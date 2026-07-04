@@ -1,20 +1,29 @@
 import { z } from "zod";
 import type { AuctionStatus, BiddingMode, AuctionRound, LotStatus } from "./auctions.js";
 import type { Sport } from "./sports.js";
-import type { CricketRole, BowlingStyle } from "./players.js";
+import type { CricketRole, BowlingStyle, BattingPosition, AllRounderType } from "./players.js";
+import type { FootballPosition, FootballDetailPosition } from "./sports.js";
 /** Client → server events (proposals; the server decides). */
 export declare const CLIENT_EVENTS: {
     readonly AUCTION_JOIN: "AUCTION_JOIN";
     readonly AUCTION_LEAVE: "AUCTION_LEAVE";
     readonly BID_PLACE: "BID_PLACE";
+    readonly BID_UNDO: "BID_UNDO";
+    readonly BID_RESET: "BID_RESET";
     readonly LOT_OPEN: "LOT_OPEN";
     readonly LOT_SELL: "LOT_SELL";
     readonly LOT_MARK_UNSOLD: "LOT_MARK_UNSOLD";
+    readonly LOT_REBID: "LOT_REBID";
+    readonly SALE_REVERSE: "SALE_REVERSE";
     readonly TIMER_ADD: "TIMER_ADD";
     readonly TIMER_PAUSE: "TIMER_PAUSE";
     readonly TIMER_RESUME: "TIMER_RESUME";
     readonly PHASE_ADVANCE: "PHASE_ADVANCE";
     readonly ASSIGN_PLAYER: "ASSIGN_PLAYER";
+    readonly AUTO_START: "AUTO_START";
+    readonly AUCTION_SUSPEND: "AUCTION_SUSPEND";
+    readonly AUCTION_RESUME: "AUCTION_RESUME";
+    readonly AUCTION_CANCEL: "AUCTION_CANCEL";
 };
 export type ClientEvent = (typeof CLIENT_EVENTS)[keyof typeof CLIENT_EVENTS];
 /** Server → client events (past-tense facts; carry a monotonic `seq`). */
@@ -30,6 +39,7 @@ export declare const SERVER_EVENTS: {
     readonly TIMER_PAUSED: "TIMER_PAUSED";
     readonly TIMER_RESUMED: "TIMER_RESUMED";
     readonly PHASE_CHANGED: "PHASE_CHANGED";
+    readonly AUTO_FINISHED: "AUTO_FINISHED";
     readonly ERROR: "ERROR";
 };
 export type ServerEvent = (typeof SERVER_EVENTS)[keyof typeof SERVER_EVENTS];
@@ -118,6 +128,14 @@ export declare const assignPlayerSchema: z.ZodObject<{
     teamId: string;
 }>;
 export type AssignPlayerPayload = z.infer<typeof assignPlayerSchema>;
+export declare const autoStartSchema: z.ZodObject<{
+    auctionId: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    auctionId: string;
+}, {
+    auctionId: string;
+}>;
+export type AutoStartPayload = z.infer<typeof autoStartSchema>;
 export interface SnapshotAuction {
     id: string;
     name: string;
@@ -125,6 +143,8 @@ export interface SnapshotAuction {
     round: AuctionRound;
     biddingMode: BiddingMode;
     sport: Sport;
+    /** True while the server bot engine is driving this auction (UI is view-only). */
+    autoPilot: boolean;
 }
 export interface SnapshotRules {
     creditPerTeam: string;
@@ -164,6 +184,16 @@ export interface CurrentLot {
     photoUrl: string | null;
     isOverseas: boolean;
     basePrice: string;
+    /** Player attributes for the on-the-block board card (display only). */
+    sport: Sport;
+    nationality: string | null;
+    role: string | null;
+    cricketRole: CricketRole | null;
+    battingPosition: BattingPosition | null;
+    bowlingStyle: BowlingStyle | null;
+    allRounderType: AllRounderType | null;
+    footballPosition: FootballPosition | null;
+    footballDetailPosition: FootballDetailPosition | null;
     status: LotStatus;
     round: AuctionRound;
     /** null before the first bid → the next required bid is basePrice. */
@@ -286,6 +316,32 @@ export interface PhaseChangedEvent {
     seq: number;
     status: AuctionStatus;
     round: AuctionRound;
+}
+/** A single squad-composition role line in the best-effort auto-pilot report. */
+export declare const SQUAD_ROLE_KEYS: readonly ["WICKETKEEPER", "BATSMAN", "OPENER", "PACE_BOWLER", "SPINNER", "ALL_ROUNDER"];
+export type SquadRoleKey = (typeof SQUAD_ROLE_KEYS)[number];
+export interface SquadRoleReport {
+    role: SquadRoleKey;
+    required: number;
+    got: number;
+    /** max(0, required - got) — how many of this role the team fell short by. */
+    short: number;
+}
+export interface TeamSquadReport {
+    teamId: string;
+    teamName: string;
+    playerCount: number;
+    /** Whether the team reached minPlayersPerTeam (a hard requirement). */
+    minPlayersMet: boolean;
+    roles: SquadRoleReport[];
+}
+export interface AutoFinishedEvent {
+    seq: number;
+    status: AuctionStatus;
+    round: AuctionRound;
+    /** True if the run reached COMPLETED; false if it stopped short (pool too small / aborted). */
+    completed: boolean;
+    report: TeamSquadReport[];
 }
 /** Sent only to the offending socket — a protocol/authz fault. */
 export interface SocketErrorEvent {

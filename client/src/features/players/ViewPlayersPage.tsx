@@ -6,7 +6,7 @@ import {
   BATTING_POSITION_LABELS,
   BOWLING_STYLE_LABELS,
   ALL_ROUNDER_TYPE_LABELS,
-  nationByCode,
+  resolveNation,
 } from "shared";
 import type { Player, Paginated, PlayerSortField } from "shared";
 import { apiFetch, ApiClientError } from "../../api/client.js";
@@ -26,15 +26,6 @@ function photoSrc(photoUrl: string): string {
   return /^https?:\/\//i.test(photoUrl) ? photoUrl : `${API_BASE}${photoUrl}`;
 }
 
-function ageFrom(dob: string | null): number | null {
-  if (!dob) return null;
-  const birth = new Date(dob);
-  const now = new Date();
-  let age = now.getFullYear() - birth.getFullYear();
-  const m = now.getMonth() - birth.getMonth();
-  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
-  return age >= 0 ? age : null;
-}
 
 // Sort fields that only make sense within a single sport's view; switching the
 // sport filter resets back to the default sort when one of these is active.
@@ -139,27 +130,34 @@ export function ViewPlayersPage() {
 
   const nationalityCell = (p: Player): ReactNode =>
     p.nationality ? (
-      <span className="inline-flex items-center gap-2">
+      <span title={resolveNation(p.nationality)?.name ?? p.nationality}>
         <Flag code={p.nationality} />
-        {nationByCode(p.nationality)?.name ?? p.nationality}
       </span>
     ) : (
       "—"
     );
 
-  const dobCell = (p: Player): ReactNode => {
-    if (!p.dateOfBirth) return "—";
-    const age = ageFrom(p.dateOfBirth);
-    return (
-      <span>
-        {p.dateOfBirth}
-        {age !== null && <span className="text-slate-500"> ({age}y)</span>}
-      </span>
+
+  const detailsCell = (p: Player): ReactNode => {
+    const parts: string[] = [];
+    if (p.sport === "CRICKET") {
+      if (p.cricketRole) parts.push(CRICKET_ROLE_LABELS[p.cricketRole]);
+      if (p.battingPosition) parts.push(BATTING_POSITION_LABELS[p.battingPosition]);
+      if (p.bowlingStyle) parts.push(BOWLING_STYLE_LABELS[p.bowlingStyle]);
+      if (p.allRounderType) parts.push(ALL_ROUNDER_TYPE_LABELS[p.allRounderType]);
+    } else if (p.sport === "FOOTBALL") {
+      if (p.footballPosition) parts.push(p.footballPosition);
+      if (p.footballDetailPosition) parts.push(p.footballDetailPosition);
+    } else if (p.role) {
+      parts.push(p.role);
+    }
+    return parts.length > 0 ? (
+      <span className="text-xs text-slate-400">{parts.join(" · ")}</span>
+    ) : (
+      "—"
     );
   };
 
-  // Columns adapt to the sport filter: common columns always, plus the selected
-  // sport's structured columns. "All sports" shows the Sport column instead.
   function buildColumns(): Column[] {
     const cols: Column[] = [
       { key: null, label: "Photo", render: photoCell },
@@ -211,8 +209,7 @@ export function ViewPlayersPage() {
 
     cols.push(
       { key: "nationality", label: "Nationality", render: nationalityCell },
-      { key: "dateOfBirth", label: "DOB", render: dobCell },
-      { key: "externalRef", label: "Ext ref", render: (p) => p.externalRef ?? "—" },
+      { key: null, label: "Details", render: detailsCell },
       { key: "createdAt", label: "Added", render: (p) => p.createdAt.slice(0, 10) },
       {
         key: null,

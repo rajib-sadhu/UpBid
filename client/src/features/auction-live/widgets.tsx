@@ -7,6 +7,8 @@ const STATUS_STYLES: Record<string, string> = {
   RE_AUCTION: "bg-indigo-500/15 text-indigo-300",
   ASSIGNMENT: "bg-indigo-500/15 text-indigo-300",
   COMPLETED: "bg-slate-700/40 text-slate-400",
+  SUSPENDED: "bg-amber-500/15 text-amber-400",
+  CANCELLED: "bg-red-500/15 text-red-400",
 };
 
 /** Small circular player photo, falling back to the first initial. */

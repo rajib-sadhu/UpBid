@@ -120,3 +120,120 @@ export async function finalizeLot(
     },
   };
 }
+
+/**
+ * Organizer correction: undo the most recent SALE in the auction. Deletes the
+ * TeamPlayer, refunds the winner (committedAmount/playerCount), and puts the lot
+ * back ON_BLOCK in its exact pre-sell state (currentPrice = soldPrice, leader =
+ * winner) with a fresh timer, so the organizer can re-bid, undo the bid, sell to
+ * the right team, or mark it unsold. Bid history is kept (only the TeamPlayer is
+ * removed). Requires an empty block — the one-lot-on-the-block invariant. The
+ * caller rebroadcasts a fresh snapshot.
+ */
+export async function reverseLastSale(auctionId: string): Promise<void> {
+  const auction = await prisma.auction.findUnique({
+    where: { id: auctionId },
+    include: { rules: true },
+  });
+  if (!auction) throw Errors.notFound("Auction not found");
+  if (auction.status !== "LIVE" && auction.status !== "RE_AUCTION") {
+    throw Errors.invalidState("Sales can only be reversed during a live round");
+  }
+  if (auction.currentAuctionPlayerId) {
+    throw Errors.invalidState("Finalize the current lot before reversing a sale");
+  }
+  if (!auction.rules) throw Errors.invalidState("Auction has no rules configured");
+
+  const sale = await prisma.teamPlayer.findFirst({
+    where: { auctionPlayer: { auctionId } },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    include: { auctionPlayer: true },
+  });
+  if (!sale) throw new AppError("NO_SALE", "There is no sale to reverse", 409);
+  const lot = sale.auctionPlayer;
+  if (lot.status !== "SOLD" || !lot.soldToTeamId || !lot.soldPrice) {
+    throw new AppError("NO_SALE", "The most recent acquisition is not a reversible sale", 409);
+  }
+
+  const endsAt = new Date(Date.now() + auction.rules.defaultLotDurationSec * 1000);
+  await prisma.$transaction([
+    prisma.teamPlayer.delete({ where: { id: sale.id } }),
+    prisma.team.update({
+      where: { id: lot.soldToTeamId },
+      data: { committedAmount: { decrement: lot.soldPrice }, playerCount: { decrement: 1 } },
+    }),
+    prisma.auctionPlayer.update({
+      where: { id: lot.id },
+      data: {
+        status: "ON_BLOCK",
+        currentPrice: lot.soldPrice,
+        leadingTeamId: lot.soldToTeamId,
+        soldPrice: null,
+        soldToTeamId: null,
+        version: { increment: 1 },
+      },
+    }),
+    prisma.auction.update({
+      where: { id: auctionId },
+      data: { currentAuctionPlayerId: lot.id, currentLotEndsAt: endsAt },
+    }),
+  ]);
+  timer.armBidding(auctionId, lot.id, endsAt);
+}
+
+/**
+ * Organizer correction: send a finished lot (SOLD or UNSOLD) back onto the block
+ * for a FRESH auction — base price, no leader, all prior bids wiped, fresh full
+ * timer. If it was sold, the sale is reversed first (TeamPlayer removed, winner
+ * refunded). Unlike reverseLastSale this does NOT restore the old leader/price —
+ * it restarts from scratch. Requires an empty block. Caller rebroadcasts a
+ * fresh snapshot.
+ */
+export async function rebidLot(auctionId: string, auctionPlayerId: string): Promise<void> {
+  const auction = await prisma.auction.findUnique({
+    where: { id: auctionId },
+    include: { rules: true },
+  });
+  if (!auction) throw Errors.notFound("Auction not found");
+  if (auction.status !== "LIVE" && auction.status !== "RE_AUCTION") {
+    throw Errors.invalidState("Lots can only be re-bid during a live round");
+  }
+  if (auction.currentAuctionPlayerId) {
+    throw Errors.invalidState("Finalize the current lot before re-bidding another");
+  }
+  if (!auction.rules) throw Errors.invalidState("Auction has no rules configured");
+
+  const lot = await prisma.auctionPlayer.findUnique({ where: { id: auctionPlayerId } });
+  if (!lot || lot.auctionId !== auctionId) throw Errors.notFound("Lot not found");
+  if (lot.status !== "SOLD" && lot.status !== "UNSOLD") {
+    throw Errors.invalidState("Only a sold or unsold lot can be sent back for re-bidding");
+  }
+
+  const endsAt = new Date(Date.now() + auction.rules.defaultLotDurationSec * 1000);
+  await prisma.$transaction(async (tx) => {
+    if (lot.status === "SOLD" && lot.soldToTeamId && lot.soldPrice) {
+      await tx.teamPlayer.deleteMany({ where: { auctionPlayerId } });
+      await tx.team.update({
+        where: { id: lot.soldToTeamId },
+        data: { committedAmount: { decrement: lot.soldPrice }, playerCount: { decrement: 1 } },
+      });
+    }
+    await tx.bid.deleteMany({ where: { auctionPlayerId } });
+    await tx.auctionPlayer.update({
+      where: { id: auctionPlayerId },
+      data: {
+        status: "ON_BLOCK",
+        currentPrice: null,
+        leadingTeamId: null,
+        soldPrice: null,
+        soldToTeamId: null,
+        version: { increment: 1 },
+      },
+    });
+    await tx.auction.update({
+      where: { id: auctionId },
+      data: { currentAuctionPlayerId: auctionPlayerId, currentLotEndsAt: endsAt },
+    });
+  });
+  timer.armBidding(auctionId, auctionPlayerId, endsAt);
+}

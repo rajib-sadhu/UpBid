@@ -22,11 +22,11 @@ function LineupBadge({ status }: { status: string }) {
 
 function ProgressBar({ data }: { data: AuctionMonitor["progress"] }) {
   const segs = [
-    { key: "SOLD", n: data.SOLD, cls: "bg-emerald-500" },
-    { key: "ASSIGNED", n: data.ASSIGNED, cls: "bg-indigo-500" },
-    { key: "ON_BLOCK", n: data.ON_BLOCK, cls: "bg-amber-500" },
-    { key: "UNSOLD", n: data.UNSOLD, cls: "bg-rose-500/70" },
-    { key: "PENDING", n: data.PENDING, cls: "bg-slate-600" },
+    { key: "SOLD", label: "Sold", n: data.SOLD, cls: "bg-emerald-500" },
+    { key: "ASSIGNED", label: "Assigned", n: data.ASSIGNED, cls: "bg-indigo-500" },
+    { key: "ON_BLOCK", label: "On block", n: data.ON_BLOCK, cls: "bg-amber-500" },
+    { key: "UNSOLD", label: "Unsold", n: data.UNSOLD, cls: "bg-rose-500/70" },
+    { key: "PENDING", label: "Pending", n: data.PENDING, cls: "bg-slate-600" },
   ];
   const total = data.total || 1;
   return (
@@ -34,16 +34,22 @@ function ProgressBar({ data }: { data: AuctionMonitor["progress"] }) {
       <div className="mb-2 flex h-2.5 w-full overflow-hidden rounded-full bg-slate-800">
         {segs.map((s) =>
           s.n > 0 ? (
-            <div key={s.key} className={s.cls} style={{ width: `${(s.n / total) * 100}%` }} />
+            <div
+              key={s.key}
+              className={s.cls}
+              style={{ width: `${(s.n / total) * 100}%` }}
+              title={`${s.label}: ${s.n}`}
+            />
           ) : null,
         )}
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
-        <span>Sold {data.SOLD}</span>
-        <span>Assigned {data.ASSIGNED}</span>
-        <span>On block {data.ON_BLOCK}</span>
-        <span>Unsold {data.UNSOLD}</span>
-        <span>Pending {data.PENDING}</span>
+        {segs.map((s) => (
+          <span key={s.key} className="flex items-center gap-1.5">
+            <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${s.cls}`} />
+            {s.label} {s.n}
+          </span>
+        ))}
         <span className="text-slate-300">Total {data.total}</span>
       </div>
     </div>

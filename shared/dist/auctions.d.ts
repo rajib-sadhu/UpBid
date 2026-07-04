@@ -1,5 +1,5 @@
 import { z } from "zod";
-export declare const AUCTION_STATUSES: readonly ["DRAFT", "LIVE", "PAUSED", "RE_AUCTION", "ASSIGNMENT", "COMPLETED"];
+export declare const AUCTION_STATUSES: readonly ["DRAFT", "LIVE", "PAUSED", "RE_AUCTION", "ASSIGNMENT", "COMPLETED", "SUSPENDED", "CANCELLED"];
 export type AuctionStatus = (typeof AUCTION_STATUSES)[number];
 export declare const BIDDING_MODES: readonly ["ORGANIZER", "FRANCHISE"];
 export type BiddingMode = (typeof BIDDING_MODES)[number];
@@ -167,6 +167,43 @@ export declare const lineupRulesSchema: z.ZodEffects<z.ZodObject<{
     editableAfterLockByOwner?: boolean | undefined;
 }>;
 export type LineupRulesInput = z.infer<typeof lineupRulesSchema>;
+export declare const cricketSquadTargetsSchema: z.ZodEffects<z.ZodObject<{
+    minWicketkeepers: z.ZodDefault<z.ZodNumber>;
+    minBatsmen: z.ZodDefault<z.ZodNumber>;
+    minOpeners: z.ZodDefault<z.ZodNumber>;
+    minPaceBowlers: z.ZodDefault<z.ZodNumber>;
+    minSpinners: z.ZodDefault<z.ZodNumber>;
+    minAllRounders: z.ZodDefault<z.ZodNumber>;
+}, "strip", z.ZodTypeAny, {
+    minWicketkeepers: number;
+    minBatsmen: number;
+    minOpeners: number;
+    minPaceBowlers: number;
+    minSpinners: number;
+    minAllRounders: number;
+}, {
+    minWicketkeepers?: number | undefined;
+    minBatsmen?: number | undefined;
+    minOpeners?: number | undefined;
+    minPaceBowlers?: number | undefined;
+    minSpinners?: number | undefined;
+    minAllRounders?: number | undefined;
+}>, {
+    minWicketkeepers: number;
+    minBatsmen: number;
+    minOpeners: number;
+    minPaceBowlers: number;
+    minSpinners: number;
+    minAllRounders: number;
+}, {
+    minWicketkeepers?: number | undefined;
+    minBatsmen?: number | undefined;
+    minOpeners?: number | undefined;
+    minPaceBowlers?: number | undefined;
+    minSpinners?: number | undefined;
+    minAllRounders?: number | undefined;
+}>;
+export type CricketSquadTargetsInput = z.infer<typeof cricketSquadTargetsSchema>;
 export interface AuctionRulesDTO {
     creditPerTeam: string;
     minPlayersPerTeam: number;
@@ -179,6 +216,14 @@ export interface IncrementTierDTO {
     id: string;
     fromAmount: string;
     increment: string;
+}
+export interface CricketSquadTargetsDTO {
+    minWicketkeepers: number;
+    minBatsmen: number;
+    minOpeners: number;
+    minPaceBowlers: number;
+    minSpinners: number;
+    minAllRounders: number;
 }
 export interface LineupRulesDTO {
     startingSize: number;
@@ -200,9 +245,13 @@ export interface Auction {
     status: AuctionStatus;
     biddingMode: BiddingMode;
     round: AuctionRound;
+    autoPilot: boolean;
     createdAt: string;
     teamCount?: number;
     lotCount?: number;
+    sport?: string;
+    leagueName?: string;
+    seasonName?: string;
 }
 /** Full auction config for the DRAFT setup screen. */
 export interface AuctionDetail extends Auction {
@@ -210,6 +259,7 @@ export interface AuctionDetail extends Auction {
     leagueId: string;
     rules: AuctionRulesDTO | null;
     lineupRules: LineupRulesDTO | null;
+    cricketSquadTargets: CricketSquadTargetsDTO | null;
     incrementTiers: IncrementTierDTO[];
     allowedFormationIds: string[];
 }

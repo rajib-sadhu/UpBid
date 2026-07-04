@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { updateAuctionSchema, BIDDING_MODES } from "shared";
@@ -12,6 +12,7 @@ import { Card } from "../../components/ui/card.js";
 import { RulesCard } from "./sections/RulesCard.js";
 import { TiersCard } from "./sections/TiersCard.js";
 import { LineupRulesCard } from "./sections/LineupRulesCard.js";
+import { CricketSquadTargetsCard } from "./sections/CricketSquadTargetsCard.js";
 import { TeamsCard } from "./sections/TeamsCard.js";
 import { FormationsCard } from "./sections/FormationsCard.js";
 import { LotsCard } from "./sections/LotsCard.js";
@@ -23,10 +24,13 @@ const STATUS_STYLES: Record<string, string> = {
   RE_AUCTION: "bg-indigo-500/15 text-indigo-300",
   ASSIGNMENT: "bg-indigo-500/15 text-indigo-300",
   COMPLETED: "bg-slate-700/40 text-slate-400",
+  SUSPENDED: "bg-amber-500/15 text-amber-400",
+  CANCELLED: "bg-red-500/15 text-red-400",
 };
 
 export function AuctionSetupPage() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const [detail, setDetail] = useState<AuctionDetail | null>(null);
   const [lots, setLots] = useState<Lot[]>([]);
   const [formations, setFormations] = useState<Formation[]>([]);
@@ -79,6 +83,21 @@ export function AuctionSetupPage() {
     }
   }
 
+  async function deleteAuction() {
+    const live = detail && detail.status !== "DRAFT";
+    const message = live
+      ? "Permanently delete this auction? All teams, bids and sales will be wiped — this cannot be undone. (To keep the records, use “Cancel auction” inside the live screen instead.)"
+      : "Delete this draft auction? This cannot be undone.";
+    if (!window.confirm(message)) return;
+    setError(null);
+    try {
+      await apiFetch(`/api/auctions/${id}`, { method: "DELETE" });
+      navigate(`/seasons/${detail!.seasonId}`);
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Could not delete auction");
+    }
+  }
+
   if (!detail) {
     return <p className="text-slate-400">{error ?? "Loading…"}</p>;
   }
@@ -128,13 +147,22 @@ export function AuctionSetupPage() {
               Save
             </Button>
           )}
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-red-400"
+              onClick={() => void deleteAuction()}
+            >
+              Delete
+            </Button>
             {detail.status === "DRAFT" ? (
               <Button type="button" onClick={() => void goLive()}>
                 Go live →
               </Button>
             ) : (
-              detail.status !== "COMPLETED" && (
+              detail.status !== "COMPLETED" &&
+              detail.status !== "CANCELLED" && (
                 <Link to={`/auctions/${id}/live`}>
                   <Button type="button">Open live auction →</Button>
                 </Link>
@@ -153,6 +181,14 @@ export function AuctionSetupPage() {
         <RulesCard auctionId={id} detail={detail} disabled={disabled} onChanged={loadAll} />
         <LineupRulesCard auctionId={id} detail={detail} disabled={disabled} onChanged={loadAll} />
         <TiersCard auctionId={id} detail={detail} disabled={disabled} onChanged={loadAll} />
+        {detail.sport === "CRICKET" && (
+          <CricketSquadTargetsCard
+            auctionId={id}
+            detail={detail}
+            disabled={disabled}
+            onChanged={loadAll}
+          />
+        )}
         {detail.sport === "FOOTBALL" && (
           <FormationsCard
             auctionId={id}

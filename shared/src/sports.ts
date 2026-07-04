@@ -23,10 +23,12 @@ export const FOOTBALL_DETAIL_POSITIONS = [
 export type FootballDetailPosition = (typeof FOOTBALL_DETAIL_POSITIONS)[number];
 
 /** Which detailed positions belong to each broad bucket. */
-export const FOOTBALL_DETAIL_BY_BUCKET: Record<FootballPosition, readonly FootballDetailPosition[]> =
-  {
-    GK: ["GK"],
-    DEF: ["RB", "CB", "LB"],
-    MID: ["DMF", "CMF", "AMF"],
-    FWD: ["LW", "RW", "ST"],
-  };
+export const FOOTBALL_DETAIL_BY_BUCKET: Record<
+  FootballPosition,
+  readonly FootballDetailPosition[]
+> = {
+  GK: ["GK"],
+  DEF: ["RB", "CB", "LB"],
+  MID: ["DMF", "CMF", "AMF"],
+  FWD: ["LW", "RW", "ST"],
+};

@@ -59,6 +59,7 @@ export async function buildStateSnapshot(auctionId: string): Promise<StateSnapsh
       round: auction.round,
       biddingMode: auction.biddingMode,
       sport: auction.season.league.sport,
+      autoPilot: auction.autoPilot,
     },
     rules: auction.rules
       ? {

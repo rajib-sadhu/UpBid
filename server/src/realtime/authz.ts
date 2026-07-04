@@ -37,3 +37,17 @@ export async function requireOrganizer(user: AuthUser, auctionId: string): Promi
     throw Errors.forbidden("Only the organizer may control this auction");
   }
 }
+
+/**
+ * Like requireOrganizer, but also rejects while auto-pilot is driving — manual
+ * lot/timer/phase controls must not fight the bot engine. Suspend/Cancel are
+ * intentionally NOT gated here: they are the kill-switch.
+ */
+export async function requireManualControl(user: AuthUser, auctionId: string): Promise<void> {
+  await requireOrganizer(user, auctionId);
+  const a = await prisma.auction.findUnique({
+    where: { id: auctionId },
+    select: { autoPilot: true },
+  });
+  if (a?.autoPilot) throw Errors.forbidden("Auto-pilot is running; manual control is disabled");
+}

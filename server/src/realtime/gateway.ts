@@ -8,6 +8,7 @@ import {
   timerAddSchema,
   phaseAdvanceSchema,
   assignPlayerSchema,
+  autoStartSchema,
 } from "shared";
 import type { ZodSchema } from "zod";
 import type { AuthUser } from "../auth/types.js";
@@ -22,14 +23,15 @@ import {
   nextSeq,
   currentSeq,
 } from "./broadcast.js";
-import { canViewAuction, requireOrganizer } from "./authz.js";
+import { canViewAuction, requireOrganizer, requireManualControl } from "./authz.js";
 import { buildStateSnapshot } from "./snapshot.js";
 import * as timer from "./timer.js";
-import { placeBid } from "../services/bid-pipeline.js";
+import { placeBid, undoLastBid, resetCurrentLotBids } from "../services/bid-pipeline.js";
 import { openLot } from "../services/lot.js";
-import { finalizeLot } from "../services/finalize.js";
+import { finalizeLot, reverseLastSale, rebidLot } from "../services/finalize.js";
 import { assignPlayer } from "../services/assignment.js";
-import { advancePhase } from "../services/phase.js";
+import { advancePhase, suspendAuction, resumeAuction, cancelAuction } from "../services/phase.js";
+import { startAutoPilot, resumeAutoPilots } from "../services/auto-pilot/engine.js";
 
 // Bid-pipeline outcomes that are normal race results → BID_REJECTED (to the one
 // bidder), not protocol faults. Everything else (FORBIDDEN, NOT_FOUND, …) → ERROR.
@@ -99,6 +101,9 @@ export function initGateway(io: Server): void {
   // Re-arm / freeze any in-flight lots left by a previous process.
   void recoverActiveTimers().catch((e) => console.error("[realtime] timer recovery failed:", e));
 
+  // Resume any auction left mid-auto-run by a previous process.
+  void resumeAutoPilots().catch((e) => console.error("[realtime] auto-pilot recovery failed:", e));
+
   // Handshake auth: verify the JWT and attach the user (architecture.md §3).
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token as string | undefined;
@@ -165,14 +170,14 @@ export function initGateway(io: Server): void {
 
     // ---- Organizer lot control -------------------------------------------
     on(socket, CLIENT_EVENTS.LOT_OPEN, lotRefSchema, async ({ auctionId, auctionPlayerId }) => {
-      await requireOrganizer(user, auctionId);
+      await requireManualControl(user, auctionId);
       const { currentLot, endsAt } = await openLot(auctionId, auctionPlayerId);
       timer.armBidding(auctionId, auctionPlayerId, endsAt);
       emitToRoom(auctionId, SERVER_EVENTS.LOT_OPENED, { seq: nextSeq(auctionId), currentLot });
     });
 
     on(socket, CLIENT_EVENTS.LOT_SELL, lotRefSchema, async ({ auctionId, auctionPlayerId }) => {
-      await requireOrganizer(user, auctionId);
+      await requireManualControl(user, auctionId);
       const result = await finalizeLot(auctionId, auctionPlayerId, "SELL");
       emitToRoom(auctionId, SERVER_EVENTS.LOT_SOLD, { seq: nextSeq(auctionId), ...result.payload });
     });
@@ -182,7 +187,7 @@ export function initGateway(io: Server): void {
       CLIENT_EVENTS.LOT_MARK_UNSOLD,
       lotRefSchema,
       async ({ auctionId, auctionPlayerId }) => {
-        await requireOrganizer(user, auctionId);
+        await requireManualControl(user, auctionId);
         const result = await finalizeLot(auctionId, auctionPlayerId, "UNSOLD");
         emitToRoom(auctionId, SERVER_EVENTS.LOT_UNSOLD, {
           seq: nextSeq(auctionId),
@@ -191,9 +196,37 @@ export function initGateway(io: Server): void {
       },
     );
 
+    // ---- Organizer corrections (undo bid / reverse sale) -----------------
+    // Both are rare, state-wide changes; rather than craft bespoke deltas we
+    // mutate and rebroadcast a full snapshot, which every client treats as an
+    // authoritative reset.
+    on(socket, CLIENT_EVENTS.BID_UNDO, auctionIdSchema, async ({ auctionId }) => {
+      await requireManualControl(user, auctionId);
+      await undoLastBid(auctionId);
+      emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
+    });
+
+    on(socket, CLIENT_EVENTS.BID_RESET, auctionIdSchema, async ({ auctionId }) => {
+      await requireManualControl(user, auctionId);
+      await resetCurrentLotBids(auctionId);
+      emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
+    });
+
+    on(socket, CLIENT_EVENTS.SALE_REVERSE, auctionIdSchema, async ({ auctionId }) => {
+      await requireManualControl(user, auctionId);
+      await reverseLastSale(auctionId);
+      emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
+    });
+
+    on(socket, CLIENT_EVENTS.LOT_REBID, lotRefSchema, async ({ auctionId, auctionPlayerId }) => {
+      await requireManualControl(user, auctionId);
+      await rebidLot(auctionId, auctionPlayerId);
+      emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
+    });
+
     // ---- Organizer timer control -----------------------------------------
     on(socket, CLIENT_EVENTS.TIMER_ADD, timerAddSchema, async ({ auctionId, seconds }) => {
-      await requireOrganizer(user, auctionId);
+      await requireManualControl(user, auctionId);
       const lotId = await requireCurrentLot(auctionId);
       const endsAt = timer.addTime(auctionId, lotId, seconds);
       await prisma.auction.update({
@@ -208,7 +241,7 @@ export function initGateway(io: Server): void {
     });
 
     on(socket, CLIENT_EVENTS.TIMER_PAUSE, auctionIdSchema, async ({ auctionId }) => {
-      await requireOrganizer(user, auctionId);
+      await requireManualControl(user, auctionId);
       const lotId = await requireCurrentLot(auctionId);
       const remainingMs = timer.pause(auctionId);
       await prisma.auction.update({
@@ -223,7 +256,7 @@ export function initGateway(io: Server): void {
     });
 
     on(socket, CLIENT_EVENTS.TIMER_RESUME, auctionIdSchema, async ({ auctionId }) => {
-      await requireOrganizer(user, auctionId);
+      await requireManualControl(user, auctionId);
       const lotId = await requireCurrentLot(auctionId);
       const rules = await prisma.auctionRules.findUnique({
         where: { auctionId },
@@ -243,18 +276,56 @@ export function initGateway(io: Server): void {
 
     // ---- Phase + assignment ----------------------------------------------
     on(socket, CLIENT_EVENTS.PHASE_ADVANCE, phaseAdvanceSchema, async ({ auctionId, to }) => {
-      await requireOrganizer(user, auctionId);
+      await requireManualControl(user, auctionId);
       const result = await advancePhase(auctionId, to);
       emitToRoom(auctionId, SERVER_EVENTS.PHASE_CHANGED, { seq: nextSeq(auctionId), ...result });
     });
 
+    // ---- Whole-auction lifecycle (organizer) -----------------------------
+    on(socket, CLIENT_EVENTS.AUCTION_SUSPEND, auctionIdSchema, async ({ auctionId }) => {
+      await requireOrganizer(user, auctionId);
+      await suspendAuction(auctionId);
+      emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
+    });
+
+    on(socket, CLIENT_EVENTS.AUCTION_RESUME, auctionIdSchema, async ({ auctionId }) => {
+      await requireOrganizer(user, auctionId);
+      await resumeAuction(auctionId);
+      emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
+    });
+
+    on(socket, CLIENT_EVENTS.AUCTION_CANCEL, auctionIdSchema, async ({ auctionId }) => {
+      await requireOrganizer(user, auctionId);
+      await cancelAuction(auctionId);
+      emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
+    });
+
     on(socket, CLIENT_EVENTS.ASSIGN_PLAYER, assignPlayerSchema, async (payload) => {
-      // AuthZ is inside assignPlayer (organizer force vs franchise choose).
+      // AuthZ is inside assignPlayer (organizer force vs franchise choose). Block
+      // manual assignment while the bot engine is force-filling.
+      const a = await prisma.auction.findUnique({
+        where: { id: payload.auctionId },
+        select: { autoPilot: true },
+      });
+      if (a?.autoPilot) {
+        throw new AppError(
+          "FORBIDDEN",
+          "Auto-pilot is running; manual assignment is disabled",
+          403,
+        );
+      }
       const result = await assignPlayer(user, payload);
       emitToRoom(payload.auctionId, SERVER_EVENTS.PLAYER_ASSIGNED, {
         seq: nextSeq(payload.auctionId),
         ...result,
       });
+    });
+
+    // ---- Auto-pilot (organizer hands the auction to the bot engine) -------
+    on(socket, CLIENT_EVENTS.AUTO_START, autoStartSchema, async ({ auctionId }) => {
+      await requireOrganizer(user, auctionId);
+      await startAutoPilot(auctionId);
+      emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
     });
   });
 }

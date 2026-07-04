@@ -20,6 +20,8 @@ const STATUS_STYLES: Record<string, string> = {
   RE_AUCTION: "bg-indigo-500/15 text-indigo-300",
   ASSIGNMENT: "bg-indigo-500/15 text-indigo-300",
   COMPLETED: "bg-slate-700/40 text-slate-400",
+  SUSPENDED: "bg-amber-500/15 text-amber-400",
+  CANCELLED: "bg-red-500/15 text-red-400",
 };
 
 const LINEUP_LABEL: Record<string, string> = {
@@ -54,7 +56,7 @@ export function DashboardPage() {
 
   if (!user) return null;
   const isManager = user.role === "SUPER_ADMIN" || user.role === "ORGANIZER";
-  const liveOrActive = auctions.filter((a) => a.status !== "DRAFT");
+  const liveOrActive = auctions.filter((a) => a.status !== "DRAFT" && a.status !== "CANCELLED");
 
   return (
     <div className="space-y-6">
@@ -151,7 +153,14 @@ export function DashboardPage() {
                 key={a.id}
                 className="flex items-center justify-between rounded-md border border-slate-800 px-3 py-2"
               >
-                <span className="font-medium">{a.name}</span>
+                <div className="min-w-0">
+                  <span className="font-medium">{a.name}</span>
+                  {(a.sport || a.leagueName || a.seasonName) && (
+                    <p className="text-xs text-slate-500">
+                      {[a.sport, a.leagueName, a.seasonName].filter(Boolean).join(" · ")}
+                    </p>
+                  )}
+                </div>
                 <span className="flex items-center gap-3">
                   <StatusChip status={a.status} />
                   <Link
@@ -160,12 +169,14 @@ export function DashboardPage() {
                   >
                     Monitor
                   </Link>
-                  <Link
-                    to={`/auctions/${a.id}/live`}
-                    className="text-sm text-indigo-400 hover:text-indigo-300"
-                  >
-                    Live →
-                  </Link>
+                  {a.status !== "SUSPENDED" && a.status !== "CANCELLED" && (
+                    <Link
+                      to={`/auctions/${a.id}/live`}
+                      className="text-sm text-indigo-400 hover:text-indigo-300"
+                    >
+                      Live →
+                    </Link>
+                  )}
                 </span>
               </div>
             ))}

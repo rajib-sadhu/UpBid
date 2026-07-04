@@ -3,6 +3,7 @@ import {
   updateAuctionSchema,
   auctionRulesSchema,
   lineupRulesSchema,
+  cricketSquadTargetsSchema,
   incrementTiersSchema,
   allowedFormationsSchema,
   addLotsSchema,
@@ -37,6 +38,12 @@ router.put(
   own,
   validateBody(lineupRulesSchema),
   asyncHandler(a.putLineupRules),
+);
+router.put(
+  "/:id/cricket-squad-targets",
+  own,
+  validateBody(cricketSquadTargetsSchema),
+  asyncHandler(a.putCricketSquadTargets),
 );
 router.put(
   "/:id/increment-tiers",

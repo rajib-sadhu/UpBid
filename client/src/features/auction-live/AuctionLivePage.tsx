@@ -1,24 +1,44 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { StateSnapshot, SnapshotTeam, CurrentLot, LiveLot } from "shared";
+import type { StateSnapshot, SnapshotTeam, CurrentLot, LiveLot, AutoFinishedEvent } from "shared";
+import {
+  CRICKET_ROLE_LABELS,
+  BATTING_POSITION_LABELS,
+  BOWLING_STYLE_LABELS,
+  ALL_ROUNDER_TYPE_LABELS,
+  resolveNation,
+} from "shared";
+import { Flag } from "../../components/ui/flag.js";
 import { useAuth } from "../auth/AuthContext.js";
 import { useAuctionRoom, type AuctionRoom } from "../../socket/useAuctionRoom.js";
 import { Card } from "../../components/ui/card.js";
 import { Button } from "../../components/ui/button.js";
 import { Select } from "../../components/ui/select.js";
+import { cn } from "../../lib/utils.js";
 import { StatusBadge, Countdown, fmtCr, cmpMoney, PlayerIcon } from "./widgets.js";
 
 export function AuctionLivePage() {
   const { id } = useParams();
   const { user } = useAuth();
   const room = useAuctionRoom(id);
-  const { snapshot, conn, lastError } = room;
+  const { snapshot, conn, lastError, autoReport } = room;
 
   // Capture clock skew once per full snapshot (serverTime only changes then).
   const skewRef = useRef(0);
   useEffect(() => {
     if (snapshot) skewRef.current = Date.parse(snapshot.serverTime) - Date.now();
   }, [snapshot?.serverTime]);
+
+  // When a new lot goes on the block, pull every viewer up to the bidding area.
+  const bidAreaRef = useRef<HTMLDivElement>(null);
+  const prevLotIdRef = useRef<string | null>(null);
+  const openLotId = snapshot?.currentLot?.auctionPlayerId ?? null;
+  useEffect(() => {
+    if (openLotId && openLotId !== prevLotIdRef.current) {
+      bidAreaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    prevLotIdRef.current = openLotId;
+  }, [openLotId]);
 
   if (!snapshot) {
     return (
@@ -62,18 +82,43 @@ export function AuctionLivePage() {
         </p>
       )}
 
+      {auction.status === "SUSPENDED" && (
+        <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
+          This auction is paused.{" "}
+          {isOrg
+            ? "Resume it from the organizer controls to continue bidding."
+            : "Waiting for the organizer to resume."}
+        </p>
+      )}
+      {auction.status === "CANCELLED" && (
+        <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+          This auction was cancelled. Results are read-only.
+        </p>
+      )}
+      {auction.autoPilot && (
+        <p className="rounded-md border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-sm text-indigo-200">
+          🤖 Auto-pilot is running — bots are bidding for every team and manual controls are
+          disabled.{" "}
+          {isOrg ? "Use “Stop auto-pilot” below to abort." : "Sit back and watch it play out."}
+        </p>
+      )}
+
+      {autoReport && <AutoReportCard report={autoReport} />}
+
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
+        <div ref={bidAreaRef} className="space-y-4 lg:col-span-2 scroll-mt-4">
           <CurrentLotCard lot={currentLot} skewMs={skewRef.current} leaderName={leaderName} />
-          {auction.status !== "ASSIGNMENT" && auction.status !== "COMPLETED" && (
-            <BidControls
-              room={room}
-              snapshot={snapshot}
-              userId={user?.id}
-              isOrg={isOrg}
-              myTeam={myTeam}
-            />
-          )}
+          {auction.status !== "ASSIGNMENT" &&
+            auction.status !== "COMPLETED" &&
+            !auction.autoPilot && (
+              <BidControls
+                room={room}
+                snapshot={snapshot}
+                userId={user?.id}
+                isOrg={isOrg}
+                myTeam={myTeam}
+              />
+            )}
           {isOrg && <OrganizerControls room={room} snapshot={snapshot} />}
         </div>
         <TeamsBoard
@@ -108,7 +153,7 @@ export function AuctionLivePage() {
       {auction.status === "ASSIGNMENT" ? (
         <AssignmentPanel room={room} snapshot={snapshot} isOrg={isOrg} myTeam={myTeam} />
       ) : (
-        <LotQueue snapshot={snapshot} isOrg={isOrg} onOpen={room.openLot} />
+        <LotQueue snapshot={snapshot} isOrg={isOrg} onOpen={room.openLot} onRebid={room.rebidLot} />
       )}
 
       <TeamRosters teams={teams} lots={snapshot.lots.items} myTeamId={myTeam?.id ?? null} />
@@ -117,6 +162,23 @@ export function AuctionLivePage() {
 }
 
 // ---------------------------------------------------------------------------
+
+/** Sport-specific one-line summary of a lot's player, e.g. "Bowler · Lower · Fast". */
+function lotDetailParts(lot: CurrentLot): string[] {
+  const parts: string[] = [];
+  if (lot.sport === "CRICKET") {
+    if (lot.cricketRole) parts.push(CRICKET_ROLE_LABELS[lot.cricketRole]);
+    if (lot.battingPosition) parts.push(BATTING_POSITION_LABELS[lot.battingPosition]);
+    if (lot.bowlingStyle) parts.push(BOWLING_STYLE_LABELS[lot.bowlingStyle]);
+    if (lot.allRounderType) parts.push(ALL_ROUNDER_TYPE_LABELS[lot.allRounderType]);
+  } else if (lot.sport === "FOOTBALL") {
+    if (lot.footballPosition) parts.push(lot.footballPosition);
+    if (lot.footballDetailPosition) parts.push(lot.footballDetailPosition);
+  } else if (lot.role) {
+    parts.push(lot.role);
+  }
+  return parts;
+}
 
 function CurrentLotCard({
   lot,
@@ -157,7 +219,24 @@ function CurrentLotCard({
               </span>
             )}
           </div>
-          <p className="text-sm text-slate-500">Base {fmtCr(lot.basePrice)}</p>
+          {(() => {
+            const details = lotDetailParts(lot);
+            const nation = resolveNation(lot.nationality);
+            if (details.length === 0 && !lot.nationality) return null;
+            return (
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-400">
+                {lot.nationality && (
+                  <span className="inline-flex items-center gap-1">
+                    <Flag code={lot.nationality} />
+                    <span>{nation?.name ?? lot.nationality}</span>
+                  </span>
+                )}
+                {details.length > 0 && lot.nationality && <span className="text-slate-600">·</span>}
+                {details.length > 0 && <span>{details.join(" · ")}</span>}
+              </div>
+            );
+          })()}
+          <p className="mt-1 text-sm text-slate-500">Base {fmtCr(lot.basePrice)}</p>
           <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
             <div>
               <p className="text-xs text-slate-500">Current</p>
@@ -200,7 +279,6 @@ function BidControls({
   myTeam: SnapshotTeam | null;
 }) {
   const lot = snapshot.currentLot;
-  const [orgTeamId, setOrgTeamId] = useState("");
   void userId;
   if (!lot) return null;
 
@@ -261,30 +339,51 @@ function BidControls({
       </Card>
     );
   }
-  const team = snapshot.teams.find((t) => t.id === orgTeamId);
-  const canAfford = team ? cmpMoney(team.maxBid, lot.requiredNextBid) >= 0 : false;
-  const full = team && rules ? team.playerCount >= rules.maxPlayersPerTeam : false;
   return (
     <Card>
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-1">
-          <label className="block text-sm text-slate-300">Bid on behalf of</label>
-          <Select value={orgTeamId} onChange={(e) => setOrgTeamId(e.target.value)}>
-            <option value="">Select team…</option>
-            {snapshot.teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name} · {fmtCr(t.maxBid)} left
-              </option>
-            ))}
-          </Select>
-        </div>
-        <Button
-          disabled={!biddable || !team || !canAfford || full || lot.leadingTeamId === orgTeamId}
-          onClick={() => orgTeamId && room.placeBid(lot, orgTeamId)}
-        >
-          Bid {fmtCr(lot.requiredNextBid)}
-        </Button>
-        {rejectMsg && <p className="self-center text-sm text-red-400">{rejectMsg}</p>}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-slate-300">
+          Tap a team to bid{" "}
+          <span className="font-medium text-slate-100">{fmtCr(lot.requiredNextBid)}</span> on its
+          behalf
+        </p>
+        {rejectMsg && <p className="text-sm text-red-400">{rejectMsg}</p>}
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+        {snapshot.teams.map((t) => {
+          const isLeading = lot.leadingTeamId === t.id;
+          const full = rules ? t.playerCount >= rules.maxPlayersPerTeam : false;
+          const canAfford = cmpMoney(t.maxBid, lot.requiredNextBid) >= 0;
+          const note = isLeading ? "leading" : full ? "full" : !canAfford ? "low" : null;
+          return (
+            <Button
+              key={t.id}
+              variant="outline"
+              disabled={!biddable || isLeading || full || !canAfford}
+              onClick={() => room.placeBid(lot, t.id)}
+              className={cn(
+                "h-auto flex-col items-stretch gap-1 px-3 py-2 text-left",
+                isLeading && "border-emerald-500/60 bg-emerald-500/15 text-emerald-300",
+              )}
+            >
+              <span className="flex items-center gap-1.5">
+                {t.primaryColor && (
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: t.primaryColor }}
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate font-medium">{t.name}</span>
+              </span>
+              <span className="flex items-center justify-between text-xs font-normal">
+                <span className="text-slate-400">{fmtCr(t.maxBid)} left</span>
+                {note && (
+                  <span className={isLeading ? "text-emerald-400" : "text-amber-400"}>{note}</span>
+                )}
+              </span>
+            </Button>
+          );
+        })}
       </div>
     </Card>
   );
@@ -294,6 +393,39 @@ function OrganizerControls({ room, snapshot }: { room: AuctionRoom; snapshot: St
   const { auction, currentLot } = snapshot;
   const inRound =
     auction.status === "LIVE" || auction.status === "RE_AUCTION" || auction.status === "PAUSED";
+  const canStartAuto =
+    (auction.status === "LIVE" || auction.status === "RE_AUCTION") && !currentLot;
+
+  // While the engine drives, the only organizer action is the kill-switch.
+  if (auction.autoPilot) {
+    return (
+      <Card>
+        <h3 className="mb-3 text-sm font-semibold text-slate-300">Organizer controls</h3>
+        <p className="text-sm text-slate-400">
+          Auto-pilot is driving the auction. Manual lot, timer and phase controls are disabled until
+          it finishes.
+        </p>
+        <div className="mt-3 border-t border-slate-800 pt-3">
+          <Button
+            variant="ghost"
+            className="text-red-400"
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Stop auto-pilot? This cancels the auction (the only way to halt a run in progress). Bids and sales so far are kept, but the auction cannot resume.",
+                )
+              ) {
+                room.cancelAuction();
+              }
+            }}
+          >
+            Stop auto-pilot (cancel auction)
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <h3 className="mb-3 text-sm font-semibold text-slate-300">Organizer controls</h3>
@@ -308,6 +440,29 @@ function OrganizerControls({ room, snapshot }: { room: AuctionRoom; snapshot: St
           </Button>
           <Button variant="outline" onClick={() => room.markUnsold(currentLot.auctionPlayerId)}>
             Mark unsold
+          </Button>
+          <Button
+            variant="ghost"
+            className="text-amber-400"
+            disabled={!currentLot.currentPrice}
+            onClick={() => room.undoLastBid()}
+          >
+            Undo last bid
+          </Button>
+          <Button
+            variant="ghost"
+            className="text-amber-400"
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Reset bidding on this lot? All bids will be cleared and it restarts from the base price with a fresh timer.",
+                )
+              ) {
+                room.resetBidding();
+              }
+            }}
+          >
+            Reset bidding
           </Button>
           <Button variant="ghost" onClick={() => room.addTime(10)}>
             +10s
@@ -333,11 +488,39 @@ function OrganizerControls({ room, snapshot }: { room: AuctionRoom; snapshot: St
         </div>
       )}
       {inRound && !currentLot && (
-        <p className="text-sm text-slate-400">
-          No lot on the block. Open one from the queue below.
-        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-sm text-slate-400">
+            No lot on the block. Open one from the queue below.
+          </p>
+          {snapshot.lots.counts.SOLD > 0 && (
+            <Button
+              variant="ghost"
+              className="text-amber-400"
+              onClick={() => room.reverseLastSale()}
+            >
+              Undo last sale
+            </Button>
+          )}
+        </div>
       )}
       <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-800 pt-3">
+        {canStartAuto && (
+          <Button
+            disabled={!!currentLot}
+            title={currentLot ? "Finalize the current lot first" : undefined}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Start auto-pilot? Bots will bid for every team and run the auction hands-off through re-auction and assignment to completion, filling each team's squad targets as best the player pool allows. Manual bidding is disabled while it runs.",
+                )
+              ) {
+                room.startAutoPilot();
+              }
+            }}
+          >
+            🤖 Auto Auction
+          </Button>
+        )}
         {auction.status === "LIVE" && (
           <Button
             variant="outline"
@@ -361,6 +544,40 @@ function OrganizerControls({ room, snapshot }: { room: AuctionRoom; snapshot: St
         )}
         {auction.status === "COMPLETED" && (
           <span className="self-center text-sm text-slate-400">Auction completed.</span>
+        )}
+        {auction.status === "CANCELLED" && (
+          <span className="self-center text-sm text-slate-400">Auction cancelled.</span>
+        )}
+
+        {(auction.status === "LIVE" || auction.status === "RE_AUCTION") && (
+          <Button
+            variant="ghost"
+            disabled={!!currentLot}
+            title={currentLot ? "Finalize the current lot first" : undefined}
+            onClick={() => room.suspendAuction()}
+          >
+            Pause auction
+          </Button>
+        )}
+        {auction.status === "SUSPENDED" && (
+          <Button onClick={() => room.resumeAuction()}>Resume auction</Button>
+        )}
+        {auction.status !== "COMPLETED" && auction.status !== "CANCELLED" && (
+          <Button
+            variant="ghost"
+            className="text-red-400"
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Cancel this auction? It will be abandoned and removed from the active list. All bids and sales so far are kept for the record, but bidding cannot resume.",
+                )
+              ) {
+                room.cancelAuction();
+              }
+            }}
+          >
+            Cancel auction
+          </Button>
         )}
       </div>
     </Card>
@@ -458,6 +675,7 @@ function PlayerCard({
   isOrg,
   canOpen,
   onOpen,
+  onRebid,
   teamName,
 }: {
   lot: LiveLot;
@@ -465,10 +683,13 @@ function PlayerCard({
   isOrg: boolean;
   canOpen: boolean;
   onOpen: (auctionPlayerId: string) => void;
+  onRebid: (auctionPlayerId: string) => void;
   teamName: (tid: string | null) => string;
 }) {
   const sold = lot.status === "SOLD" || lot.status === "ASSIGNED";
   const showOpen = isOrg && lot.status === "PENDING";
+  // A finished auction lot the organizer can send back for fresh bidding.
+  const canRebid = isOrg && (lot.status === "SOLD" || lot.status === "UNSOLD");
   const info = sold
     ? `${fmtCr(lot.soldPrice)} → ${teamName(lot.soldToTeamId)}`
     : lot.status === "UNSOLD"
@@ -494,7 +715,28 @@ function PlayerCard({
           Open
         </Button>
       ) : (
-        <span className="shrink-0 truncate text-[10px] text-slate-400">{info}</span>
+        <>
+          <span className="shrink-0 truncate text-[10px] text-slate-400">{info}</span>
+          {canRebid && (
+            <Button
+              variant="ghost"
+              className="h-auto shrink-0 px-1 py-0 text-[10px] text-amber-400"
+              disabled={!canOpen}
+              title="Send back for fresh bidding"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Re-bid ${lot.playerName}? This clears the result and all bids and puts the player back on the block from the base price.`,
+                  )
+                ) {
+                  onRebid(lot.auctionPlayerId);
+                }
+              }}
+            >
+              Re-bid
+            </Button>
+          )}
+        </>
       )}
     </div>
   );
@@ -504,14 +746,16 @@ function LotQueue({
   snapshot,
   isOrg,
   onOpen,
+  onRebid,
 }: {
   snapshot: StateSnapshot;
   isOrg: boolean;
   onOpen: (auctionPlayerId: string) => void;
+  onRebid: (auctionPlayerId: string) => void;
 }) {
   const { lots, auction, currentLot } = snapshot;
   const live = auction.status === "LIVE" || auction.status === "RE_AUCTION";
-  const canOpen = live && !currentLot;
+  const canOpen = live && !currentLot && !auction.autoPilot;
   const teamName = (tid: string | null) => snapshot.teams.find((t) => t.id === tid)?.name ?? "—";
   const c = lots.counts;
 
@@ -533,6 +777,7 @@ function LotQueue({
         isOrg={isOrg}
         canOpen={canOpen}
         onOpen={onOpen}
+        onRebid={onRebid}
         teamName={teamName}
       />
     ));
@@ -600,7 +845,7 @@ function TeamRosters({
   return (
     <Card>
       <h3 className="mb-3 text-sm font-semibold text-slate-300">Team rosters</h3>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {teams.map((t) => {
           const players = rosterOf(t.id);
           return (
@@ -632,9 +877,7 @@ function TeamRosters({
                       <PlayerIcon name={l.playerName} photoUrl={l.photoUrl} />
                       <span className="min-w-0 flex-1 truncate text-xs">
                         {l.playerName}
-                        {l.isOverseas && (
-                          <span className="ml-0.5 text-[10px] text-sky-400">✈</span>
-                        )}
+                        {l.isOverseas && <span className="ml-0.5 text-[10px] text-sky-400">✈</span>}
                       </span>
                       <span className="shrink-0 text-[10px] text-slate-400">
                         {fmtCr(l.soldPrice)}
@@ -689,41 +932,111 @@ function AssignmentPanel({
         ))}
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-1">
-          <label className="block text-sm text-slate-300">Player</label>
-          <Select value={playerId} onChange={(e) => setPlayerId(e.target.value)}>
-            <option value="">Select player…</option>
-            {available.map((l) => (
-              <option key={l.auctionPlayerId} value={l.auctionPlayerId}>
-                {l.playerName} ({l.status})
-              </option>
-            ))}
-          </Select>
-        </div>
-        {isOrg && (
+      {snapshot.auction.autoPilot ? (
+        <p className="text-sm text-slate-400">
+          Auto-pilot is force-filling teams to the minimum and best-effort role targets…
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
-            <label className="block text-sm text-slate-300">Team</label>
-            <Select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-              <option value="">Select team…</option>
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.playerCount}/{minP})
+            <label className="block text-sm text-slate-300">Player</label>
+            <Select value={playerId} onChange={(e) => setPlayerId(e.target.value)}>
+              <option value="">Select player…</option>
+              {available.map((l) => (
+                <option key={l.auctionPlayerId} value={l.auctionPlayerId}>
+                  {l.playerName} ({l.status})
                 </option>
               ))}
             </Select>
           </div>
-        )}
-        <Button
-          disabled={!playerId || !targetTeam}
-          onClick={() => targetTeam && room.assignPlayer(playerId, targetTeam)}
-        >
-          {isOrg ? "Force-assign" : "Choose"} at {fmtCr(rules?.unsoldPrice)}
-        </Button>
-      </div>
-      {available.length === 0 && (
+          {isOrg && (
+            <div className="space-y-1">
+              <label className="block text-sm text-slate-300">Team</label>
+              <Select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+                <option value="">Select team…</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.playerCount}/{minP})
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          <Button
+            disabled={!playerId || !targetTeam}
+            onClick={() => targetTeam && room.assignPlayer(playerId, targetTeam)}
+          >
+            {isOrg ? "Force-assign" : "Choose"} at {fmtCr(rules?.unsoldPrice)}
+          </Button>
+        </div>
+      )}
+      {available.length === 0 && !snapshot.auction.autoPilot && (
         <p className="mt-3 text-sm text-slate-400">No remaining players to assign.</p>
       )}
+    </Card>
+  );
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  WICKETKEEPER: "Wicketkeepers",
+  BATSMAN: "Batsmen",
+  OPENER: "Openers",
+  PACE_BOWLER: "Pace bowlers",
+  SPINNER: "Spinners",
+  ALL_ROUNDER: "All-rounders",
+};
+
+/** End-of-run best-effort squad report (per team: min met + each role short). */
+function AutoReportCard({ report }: { report: AutoFinishedEvent }) {
+  return (
+    <Card>
+      <div className="mb-3 flex items-center gap-2">
+        <h3 className="text-sm font-semibold text-slate-300">Auto-pilot report</h3>
+        <span
+          className={cn(
+            "rounded px-2 py-0.5 text-xs",
+            report.completed
+              ? "bg-emerald-500/15 text-emerald-300"
+              : "bg-amber-500/15 text-amber-300",
+          )}
+        >
+          {report.completed ? "Completed" : "Stopped short"}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {report.report.map((t) => {
+          const shortfalls = t.roles.filter((r) => r.short > 0);
+          return (
+            <div key={t.teamId} className="rounded-md border border-slate-800 p-3">
+              <div className="mb-2 flex items-center justify-between border-b border-slate-800 pb-1.5">
+                <span className="truncate text-sm font-medium">{t.teamName}</span>
+                <span
+                  className={cn(
+                    "shrink-0 text-xs",
+                    t.minPlayersMet ? "text-emerald-400" : "text-amber-400",
+                  )}
+                >
+                  {t.playerCount} players{t.minPlayersMet ? "" : " · below min"}
+                </span>
+              </div>
+              {shortfalls.length === 0 ? (
+                <p className="text-xs text-emerald-400">All role targets met ✓</p>
+              ) : (
+                <ul className="space-y-0.5 text-xs text-slate-400">
+                  {shortfalls.map((r) => (
+                    <li key={r.role} className="flex justify-between">
+                      <span>{ROLE_LABELS[r.role] ?? r.role}</span>
+                      <span className="text-amber-400">
+                        {r.got}/{r.required} (short {r.short})
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </Card>
   );
 }
