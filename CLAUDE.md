@@ -50,3 +50,6 @@ sides via `concurrently`.
 - `npm install` — install all workspaces.
 - `npm run dev` — start server (port 4000) + client (port 5173) together.
 - `npm run typecheck` / `npm run lint` / `npm run format` / `npm test`.
+- `npm run test:integration` — DB-backed vitest suite (uses its own `<db>_itest` database).
+- `npm run test:e2e` — Playwright happy paths against the production single-server
+  (builds all workspaces, seeds its own `<db>_e2e` database).

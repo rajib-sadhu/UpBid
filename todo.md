@@ -134,5 +134,37 @@ theme color, optional logo, and an optional/editable owner.
       optional owner, season select + lock, go-live materialization, franchise-
       owned bidding, monitor identity).
 
+## Phase 9 — Hardening ✅ (awaiting review)
+No schema change. Branch `phase-9-hardening`.
+
+- [x] **Concurrency proof vs real MySQL** (`server/src/services/bid-pipeline.itest.ts`):
+      8-bid simultaneous burst → exactly one accept; 10-round 4-team barrage →
+      one winner per version, strictly increasing ladder, bids == version (no
+      double-accept at the InnoDB CAS); stale-version, duplicate-clientBidId and
+      reserve-cap rejections through the real pipeline.
+- [x] **Auction lifecycle integration test** (`lifecycle.itest.ts`): LIVE bid-war
+      → SOLD with atomic tallies; NO_LEADER + UNSOLD close; phase guard with a
+      lot on the block; RE_AUCTION sweep (unsold-price opening, REAUCTION
+      acquisition); ASSIGNMENT (MIN_NOT_MET gate, pick rotation/NOT_YOUR_TURN,
+      CHOSEN vs FORCE_ASSIGNED at unsold price); COMPLETED (terminal lots,
+      committedAmount == Σ acquisition prices).
+- [x] **Integration harness**: `npm run test:integration` — vitest config +
+      global setup running `prisma db push` onto a dedicated `<db>_itest`
+      database (wiped per run, refuses the primary DATABASE_URL), seed factory.
+- [x] **Playwright e2e happy paths** (`e2e/`, `npm run test:e2e`): production
+      single-server topology (built SPA + /api + Socket.io on one port, own
+      `<db>_e2e` database). Spec A: organizer login → go-live → open lot →
+      organizer-mode bid war → sell → unsold → assignment force-assign →
+      complete. Spec B: franchise owner builds a valid cricket XI (roles,
+      batting order) and saves; organizer locks it.
+- [x] **Error-handling polish**: production boot guards (placeholder/short
+      JWT_SECRET refused, empty PEPPER refused); unhandledRejection logged
+      without dying mid-auction, uncaughtException exits for a clean restart;
+      graceful SIGTERM/SIGINT shutdown (drain HTTP, close sockets, disconnect
+      Prisma); `/api/health` now pings the DB (503 when degraded).
+- [x] **CI finalized**: MySQL 8 service container; typecheck + lint + unit →
+      `prisma migrate deploy` onto a fresh DB → integration tests → production
+      build; separate e2e job (Playwright + report artifact on failure).
+
 ## Later
-- Phase 9 — Hardening. Phase 10 — Deploy.
+- Phase 10 — Deploy (PM2/systemd config, deploy docs, backup story).
