@@ -466,6 +466,13 @@ force-`SUSPENDED` (an on-block lot is put back to `PENDING`), and their rooms
 get fresh snapshots. A suspended auction resumes into the round it left
 (`LIVE` for MAIN, `RE_AUCTION` for the unsold round).
 
+**One auction at a time per season (creation gate).** A season normally holds a
+single auction (the IPL model; a follow-up mini/replacement auction is the
+exception). `POST /seasons/:id/auctions` therefore rejects with `CONFLICT` while
+any auction of that season is not yet `COMPLETED` or `CANCELLED` — a new auction
+can only be created sequentially, after the previous one finishes. The season
+page mirrors this by hiding the create form while an auction is in progress.
+
 | From              | To           | Guard / effect                                                                                                                                                                                                    |
 | ----------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `DRAFT`           | `LIVE`       | go-live gate (rules set, ≥1 lot, ≥2 teams). Locks config, materializes `Team` rows, suspends season rivals.                                                                                                        |

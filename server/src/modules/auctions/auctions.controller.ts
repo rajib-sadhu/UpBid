@@ -69,6 +69,17 @@ export async function createAuction(req: Request, res: Response): Promise<void> 
   }
 
   const auction = await prisma.$transaction(async (tx) => {
+    // One auction at a time per season: a new auction may only be created once
+    // every earlier auction in the season is COMPLETED or CANCELLED.
+    const unfinished = await tx.auction.findFirst({
+      where: { seasonId, status: { notIn: ["COMPLETED", "CANCELLED"] } },
+      select: { name: true },
+    });
+    if (unfinished) {
+      throw Errors.conflict(
+        `This season already has an auction in progress ("${unfinished.name}"). Complete or cancel it before creating another.`,
+      );
+    }
     const created = await tx.auction.create({
       data: { name: body.name, biddingMode: body.biddingMode, seasonId },
       include: { _count: { select: { teams: true, auctionPlayers: true } } },

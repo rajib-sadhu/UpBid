@@ -33,6 +33,10 @@ export function SeasonDetailPage() {
   const [savingTeams, setSavingTeams] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // One auction at a time per season — mirrors the server-side constraint.
+  const unfinishedAuction =
+    auctions.find((au) => au.status !== "COMPLETED" && au.status !== "CANCELLED") ?? null;
+
   const {
     register,
     handleSubmit,
@@ -194,6 +198,13 @@ export function SeasonDetailPage() {
       <div className="grid gap-6 md:grid-cols-[20rem_1fr]">
         <Card className="h-fit">
           <h2 className="mb-4 font-medium">Create auction</h2>
+          {unfinishedAuction ? (
+            <p className="text-sm text-slate-400">
+              <span className="font-medium text-slate-300">{unfinishedAuction.name}</span> is
+              still in progress. A season runs one auction at a time — complete or cancel it
+              before creating another.
+            </p>
+          ) : (
           <form onSubmit={handleSubmit(onCreate)} className="space-y-3">
             <div className="space-y-1">
               <Label htmlFor="name">Name</Label>
@@ -232,6 +243,7 @@ export function SeasonDetailPage() {
               {isSubmitting ? "Creating…" : "Create auction"}
             </Button>
           </form>
+          )}
         </Card>
 
         <Card className="min-w-0">

@@ -1,4 +1,4 @@
-// Functional test: unsold-auction sweep/chaining + one-live-auction-per-season.
+// Functional test: unsold-auction sweep/chaining + one-auction-at-a-time-per-season.
 // Run from repo root: node --env-file=.env test-unsold-flow.mjs
 import { io } from "socket.io-client";
 
@@ -53,21 +53,40 @@ async function makeAuction(name, lotCount) {
   return a;
 }
 
-// --- Auction A live, then B goes live → A auto-suspends -------------------
+// --- One auction at a time per season --------------------------------------
+// Creating a second auction is blocked until the first is COMPLETED/CANCELLED.
 const A = await makeAuction(`Unsold Main ${TAG}`, 4);
 await api("POST", `/api/auctions/${A.id}/go-live`, tok);
-const B = await makeAuction(`Unsold Rival ${TAG}`, 3);
-await api("POST", `/api/auctions/${B.id}/go-live`, tok);
-const aAfter = await api("GET", `/api/auctions/${A.id}`, tok);
-ok(aAfter.status === "SUSPENDED", `going live on a second auction suspends the first (A is ${aAfter.status})`);
+let createBlocked = null;
+try {
+  await api("POST", `/api/seasons/${season.id}/auctions`, tok, {
+    name: `Unsold Rival ${TAG}`, biddingMode: "ORGANIZER",
+  });
+} catch (e) {
+  createBlocked = e;
+}
+ok(
+  createBlocked !== null && /→ 409/.test(createBlocked.message),
+  "creating a second auction while one is unfinished is rejected (409 CONFLICT)",
+);
 
-// --- Socket driver on B: sweep to unsold auction, verify price, chain -----
 const sock = io(BASE, { auth: { token: tok }, transports: ["websocket"] });
 const emit = (ev, payload) => sock.emit(ev, payload);
 const once = (ev) => new Promise((r) => sock.once(ev, r));
 const failTimer = setTimeout(() => { console.error("socket flow timed out"); process.exit(1); }, 30_000);
-
 await new Promise((r) => sock.on("connect", r));
+
+// Cancelling A frees the season for the next auction.
+emit("AUCTION_JOIN", { auctionId: A.id });
+await once("STATE_SNAPSHOT");
+emit("AUCTION_CANCEL", { auctionId: A.id });
+await once("STATE_SNAPSHOT");
+const aAfter = await api("GET", `/api/auctions/${A.id}`, tok);
+ok(aAfter.status === "CANCELLED", `cancelling the live auction frees the season (A is ${aAfter.status})`);
+const B = await makeAuction(`Unsold Rival ${TAG}`, 3);
+await api("POST", `/api/auctions/${B.id}/go-live`, tok);
+
+// --- Socket driver on B: sweep to unsold auction, verify price, chain -----
 emit("AUCTION_JOIN", { auctionId: B.id });
 await once("STATE_SNAPSHOT");
 
@@ -192,7 +211,7 @@ sock.close();
 
 // --- Cleanup ---------------------------------------------------------------
 await api("DELETE", `/api/auctions/${B.id}`, tok).catch(() => {});
-// A is SUSPENDED — cancel then delete is not supported; delete works on any status? try:
+// A is CANCELLED — delete may be restricted to drafts; best effort.
 await api("DELETE", `/api/auctions/${A.id}`, tok).catch((e) => console.log("  note:", e.message));
 await api("DELETE", `/api/seasons/${season.id}`, tok);
 for (const fid of franchiseIds) await api("DELETE", `/api/leagues/${league.id}/franchises/${fid}`, tok).catch(() => {});
