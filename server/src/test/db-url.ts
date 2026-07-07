@@ -20,6 +20,7 @@ export function itestDatabaseUrl(): string {
   const url = new URL(base);
   const dbName = url.pathname.replace(/^\//, "");
   if (!dbName) throw new Error(`DATABASE_URL has no database name: ${base}`);
-  url.pathname = `/${dbName}_itest`;
+  // Idempotent: never double-append if the URL is already the derived one.
+  if (!dbName.endsWith("_itest")) url.pathname = `/${dbName}_itest`;
   return url.toString();
 }

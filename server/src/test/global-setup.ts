@@ -13,10 +13,10 @@ const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
  */
 export default async function setup(): Promise<void> {
   const testUrl = itestDatabaseUrl();
-  if (process.env.DATABASE_URL && testUrl === process.env.DATABASE_URL) {
-    throw new Error("Refusing to run integration tests against the primary DATABASE_URL");
-  }
   const dbName = new URL(testUrl).pathname.slice(1);
+  if (!dbName.endsWith("_itest")) {
+    throw new Error(`Refusing to run integration tests against non-itest database "${dbName}"`);
+  }
   console.log(`[itest] syncing schema onto ${dbName}`);
   execSync("npx prisma db push --skip-generate", {
     cwd: serverRoot,

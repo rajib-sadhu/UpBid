@@ -17,10 +17,12 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "npm run test -w server --if-present",
-    "test:integration": "npm run test:integration -w server"
+    "test:integration": "npm run test:integration -w server",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@playwright/test": "^1.61.1",
     "concurrently": "^9.1.0",
     "eslint": "^9.17.0",
     "globals": "^15.14.0",
