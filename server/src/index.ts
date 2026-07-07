@@ -7,6 +7,7 @@ import cors from "cors";
 import helmet from "helmet";
 import { Server as SocketServer } from "socket.io";
 import { env } from "./env.js";
+import { prisma } from "./lib/prisma.js";
 import { initGateway } from "./realtime/gateway.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import userRoutes from "./modules/users/users.routes.js";
@@ -44,8 +45,13 @@ app.use(express.json());
 // User-uploaded files (player photos, team logos) served statically.
 app.use("/uploads", express.static(env.uploadDir));
 
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", service: "sports-auction-platform" });
+app.get("/api/health", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: "ok", service: "sports-auction-platform" });
+  } catch {
+    res.status(503).json({ status: "degraded", service: "sports-auction-platform" });
+  }
 });
 
 app.use("/api/auth", authRoutes);
@@ -90,3 +96,29 @@ initGateway(io);
 httpServer.listen(env.port, () => {
   console.log(`[server] listening on http://localhost:${env.port} (${env.nodeEnv})`);
 });
+
+// A stray rejected promise (socket timer, auto-pilot tick) must never take the
+// process down mid-auction — log it and keep serving. A synchronous throw
+// outside Express means unknown state: log and exit so the process manager
+// restarts us (crash recovery re-arms lot timers on boot).
+process.on("unhandledRejection", (reason) => {
+  console.error("[process] unhandled rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[process] uncaught exception:", err);
+  process.exit(1);
+});
+
+// Graceful shutdown: stop accepting connections, close live sockets, and
+// disconnect Prisma so in-flight transactions finish before the process exits.
+function shutdown(signal: string): void {
+  console.log(`[server] ${signal} received — shutting down`);
+  void io.close();
+  httpServer.close(() => {
+    void prisma.$disconnect().finally(() => process.exit(0));
+  });
+  // Hard exit if a connection refuses to drain.
+  setTimeout(() => process.exit(1), 10_000).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

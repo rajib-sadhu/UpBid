@@ -24,6 +24,22 @@ if (!parsed.success) {
 
 const e = parsed.data;
 
+// Refuse to boot production with placeholder or missing secrets: a guessable
+// JWT_SECRET forges any session, and an empty PEPPER silently voids the
+// "leaked DB can't be brute-forced" guarantee (retrofitting one later would
+// invalidate every existing password hash).
+if (e.NODE_ENV === "production") {
+  const placeholders = ["change-me-in-production", "dev-only-change-me"];
+  if (placeholders.includes(e.JWT_SECRET) || e.JWT_SECRET.length < 16) {
+    console.error("[env] JWT_SECRET is a placeholder or shorter than 16 chars — set a strong secret");
+    process.exit(1);
+  }
+  if (e.PEPPER.length === 0) {
+    console.error("[env] PEPPER must be set in production before any account is created");
+    process.exit(1);
+  }
+}
+
 export const env = {
   nodeEnv: e.NODE_ENV,
   port: e.PORT,
