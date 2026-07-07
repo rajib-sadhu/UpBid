@@ -112,9 +112,10 @@ back to HTTP long-polling automatically — live auctions still work.
 
 ## 6. Updating to a new version
 
-1. Build a fresh zip (`./scripts/package-deploy.sh`), upload via the same
-   pipeline.
-2. **Keep `.env` and `uploads/`** — never overwrite or delete them.
+1. `./scripts/build-production.sh` → zip the **contents** of `./production/`
+   (`cd production && zip -r ../production.zip .`), upload, extract over
+   `public_html`. The folder deliberately contains no `.env` and no `uploads/`,
+   so the server's copies are never touched.
 3. SSH: `npm ci --omit=dev` → `npm run prisma:deploy -w server` →
    `mkdir -p tmp && touch tmp/restart.txt` to restart. (No re-seed. Also keep
    `.htaccess` — re-copy from `deploy/htaccess.hostinger.example` if the upload

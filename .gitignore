@@ -40,3 +40,7 @@ test-results/
 .vite/
 node_modules/.vite/
 auction-app-deploy-*.zip
+
+# deploy artifacts
+production/
+production.zip
