@@ -56,6 +56,7 @@ export interface MonitorProgress {
   SOLD: number;
   UNSOLD: number;
   ASSIGNED: number;
+  RETAINED: number;
   total: number;
 }
 

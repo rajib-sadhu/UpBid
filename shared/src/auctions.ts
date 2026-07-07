@@ -20,7 +20,14 @@ export type BiddingMode = (typeof BIDDING_MODES)[number];
 export const AUCTION_ROUNDS = ["MAIN", "RE_AUCTION", "ASSIGNMENT"] as const;
 export type AuctionRound = (typeof AUCTION_ROUNDS)[number];
 
-export const LOT_STATUSES = ["PENDING", "ON_BLOCK", "SOLD", "UNSOLD", "ASSIGNED"] as const;
+export const LOT_STATUSES = [
+  "PENDING",
+  "ON_BLOCK",
+  "SOLD",
+  "UNSOLD",
+  "ASSIGNED",
+  "RETAINED",
+] as const;
 export type LotStatus = (typeof LOT_STATUSES)[number];
 
 // ---- Auction ---------------------------------------------------------------
@@ -51,6 +58,7 @@ export const auctionRulesSchema = z
     unsoldPrice: moneyString,
     defaultBasePrice: positiveMoneyString,
     defaultLotDurationSec: z.coerce.number().int().min(5).max(600).default(30),
+    maxRetentionsPerTeam: z.coerce.number().int().min(0).max(100).default(0),
   })
   .refine((v) => v.maxPlayersPerTeam >= v.minPlayersPerTeam, {
     message: "Max players must be ≥ min players",
@@ -126,6 +134,8 @@ export interface AuctionRulesDTO {
   unsoldPrice: string;
   defaultBasePrice: string;
   defaultLotDurationSec: number;
+  /** 0 = pre-auction retention disabled. */
+  maxRetentionsPerTeam: number;
 }
 
 export interface IncrementTierDTO {

@@ -34,6 +34,7 @@ export function RulesCard({ auctionId, detail, disabled, onChanged }: Props) {
       unsoldPrice: r?.unsoldPrice ?? "0.5",
       defaultBasePrice: r?.defaultBasePrice ?? "2",
       defaultLotDurationSec: r?.defaultLotDurationSec ?? 30,
+      maxRetentionsPerTeam: r?.maxRetentionsPerTeam ?? 0,
     },
   });
 
@@ -71,6 +72,7 @@ export function RulesCard({ auctionId, detail, disabled, onChanged }: Props) {
           {field("minPlayersPerTeam", "Min players / team")}
           {field("maxPlayersPerTeam", "Max players / team")}
           {field("defaultLotDurationSec", "Lot timer (sec)")}
+          {field("maxRetentionsPerTeam", "Max retentions / team")}
         </div>
         {error && <p className="text-sm text-red-400">{error}</p>}
         {saved && <p className="text-sm text-emerald-400">Rules saved</p>}

@@ -31,6 +31,7 @@ export async function listAvailablePlayers(req: Request, res: Response): Promise
     ...(query.q ? { name: { contains: query.q } } : {}),
     leagueStatuses: { none: { leagueId: ctx.leagueId, banned: true } },
     auctionEntries: { none: { auctionId } },
+    retentions: { none: { auctionId } }, // retained players never enter the pool
   };
   const [rows, total] = await Promise.all([
     prisma.player.findMany({ where, orderBy: { name: "asc" }, skip, take }),
@@ -57,6 +58,13 @@ export async function addLots(req: Request, res: Response): Promise<void> {
     where: { leagueId: ctx.leagueId, banned: true, playerId: { in: ids } },
   });
   if (bannedCount > 0) throw Errors.validation("Cannot add players banned in this league");
+
+  const retainedCount = await prisma.auctionRetention.count({
+    where: { auctionId, playerId: { in: ids } },
+  });
+  if (retainedCount > 0) {
+    throw Errors.validation("A retained player cannot also be a lot — remove the retention first");
+  }
 
   const last = await prisma.auctionPlayer.aggregate({
     where: { auctionId },

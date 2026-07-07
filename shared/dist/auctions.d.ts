@@ -5,7 +5,7 @@ export declare const BIDDING_MODES: readonly ["ORGANIZER", "FRANCHISE"];
 export type BiddingMode = (typeof BIDDING_MODES)[number];
 export declare const AUCTION_ROUNDS: readonly ["MAIN", "RE_AUCTION", "ASSIGNMENT"];
 export type AuctionRound = (typeof AUCTION_ROUNDS)[number];
-export declare const LOT_STATUSES: readonly ["PENDING", "ON_BLOCK", "SOLD", "UNSOLD", "ASSIGNED"];
+export declare const LOT_STATUSES: readonly ["PENDING", "ON_BLOCK", "SOLD", "UNSOLD", "ASSIGNED", "RETAINED"];
 export type LotStatus = (typeof LOT_STATUSES)[number];
 export declare const createAuctionSchema: z.ZodObject<{
     name: z.ZodString;
@@ -39,6 +39,7 @@ export declare const auctionRulesSchema: z.ZodEffects<z.ZodObject<{
     unsoldPrice: z.ZodEffects<z.ZodString, string, string>;
     defaultBasePrice: z.ZodEffects<z.ZodEffects<z.ZodString, string, string>, string, string>;
     defaultLotDurationSec: z.ZodDefault<z.ZodNumber>;
+    maxRetentionsPerTeam: z.ZodDefault<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
     creditPerTeam: string;
     minPlayersPerTeam: number;
@@ -46,6 +47,7 @@ export declare const auctionRulesSchema: z.ZodEffects<z.ZodObject<{
     unsoldPrice: string;
     defaultBasePrice: string;
     defaultLotDurationSec: number;
+    maxRetentionsPerTeam: number;
 }, {
     creditPerTeam: string;
     minPlayersPerTeam: number;
@@ -53,6 +55,7 @@ export declare const auctionRulesSchema: z.ZodEffects<z.ZodObject<{
     unsoldPrice: string;
     defaultBasePrice: string;
     defaultLotDurationSec?: number | undefined;
+    maxRetentionsPerTeam?: number | undefined;
 }>, {
     creditPerTeam: string;
     minPlayersPerTeam: number;
@@ -60,6 +63,7 @@ export declare const auctionRulesSchema: z.ZodEffects<z.ZodObject<{
     unsoldPrice: string;
     defaultBasePrice: string;
     defaultLotDurationSec: number;
+    maxRetentionsPerTeam: number;
 }, {
     creditPerTeam: string;
     minPlayersPerTeam: number;
@@ -67,6 +71,7 @@ export declare const auctionRulesSchema: z.ZodEffects<z.ZodObject<{
     unsoldPrice: string;
     defaultBasePrice: string;
     defaultLotDurationSec?: number | undefined;
+    maxRetentionsPerTeam?: number | undefined;
 }>;
 export type AuctionRulesInput = z.infer<typeof auctionRulesSchema>;
 export declare const incrementTierSchema: z.ZodObject<{
@@ -214,6 +219,8 @@ export interface AuctionRulesDTO {
     unsoldPrice: string;
     defaultBasePrice: string;
     defaultLotDurationSec: number;
+    /** 0 = pre-auction retention disabled. */
+    maxRetentionsPerTeam: number;
 }
 export interface IncrementTierDTO {
     id: string;

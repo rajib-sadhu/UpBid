@@ -39,7 +39,8 @@ export async function buildStateSnapshot(auctionId: string): Promise<StateSnapsh
       _count: true,
     }),
     prisma.auctionPlayer.findMany({
-      where: { auctionId },
+      // RETAINED lots never enter the bidding queue — rosters show them instead.
+      where: { auctionId, status: { not: "RETAINED" } },
       orderBy: [{ lotOrder: "asc" }, { createdAt: "asc" }],
       include: { player: true },
     }),

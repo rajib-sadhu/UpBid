@@ -6,12 +6,14 @@
 > machine. Phase 5/6 code derives from this file. Where this file restates a
 > build-plan invariant, the build plan wins on conflict — flag any discrepancy.
 >
-> **Last updated 2026-07-04** — reflects the post-launch improvements: organizer
+> **Last updated 2026-07-08** — reflects the post-launch improvements: organizer
 > corrections (undo/reset/reverse/re-bid), whole-auction lifecycle
 > (suspend/resume/cancel, one live auction per season), the chainable **unsold
 > auction** (`RE_AUCTION` sweep), the assignment **pick rotation**, the
-> **auto-pilot** bot engine, **connection presence** bars, and the forced
-> password change for provisioned accounts.
+> **auto-pilot** bot engine, **connection presence** bars, the forced
+> password change for provisioned accounts, and **pre-auction retention**
+> (teams keep previous-season players at an editable price, deducted from
+> their budget at go-live).
 
 ---
 
@@ -168,10 +170,13 @@ time — never relying on the join check alone:
     "remainingMs": null, // set only when PAUSED
   },
   "lots": {
-    // roster of ALL lots for the board/queue/assignment list. Each item carries
-    // player identity + cricketRole/bowlingStyle (for role-section grouping),
-    // status, round, soldPrice, soldToTeamId.
-    "counts": { "PENDING": 40, "ON_BLOCK": 1, "SOLD": 12, "UNSOLD": 3, "ASSIGNED": 0 },
+    // roster of the auction's lots for the board/queue/assignment list. Each item
+    // carries player identity + cricketRole/bowlingStyle (for role-section
+    // grouping), status, round, soldPrice, soldToTeamId. RETAINED lots
+    // (pre-auction retention, materialized at go-live with soldToTeamId/
+    // soldPrice set and no lotOrder) are counted but NEVER included in items —
+    // they surface through team rosters, not the bidding queue.
+    "counts": { "PENDING": 40, "ON_BLOCK": 1, "SOLD": 12, "UNSOLD": 3, "ASSIGNED": 0, "RETAINED": 4 },
     "items": [/* LiveLot[] */],
   },
   // Pick rotation — non-null only while status = ASSIGNMENT (§9).
@@ -694,3 +699,15 @@ Resolved 2026-06-28 → 2026-07-04:
     accounts backfilled by migration; seed admin exempt (§3).
 13. **Presence is organizer-only** (2026-07-04) — connection bars are visible
     to the auction organizer/admin only, on the live page and monitor (§14).
+14. **Pre-auction retention** (2026-07-08) — organizer-only, DRAFT-only: each
+    team may keep up to `AuctionRules.maxRetentionsPerTeam` players from an
+    organizer-picked COMPLETED auction of the league, at an editable price
+    (defaults to the previous cost). Staged in `AuctionRetention` (keyed on the
+    franchise — teams don't exist until go-live); banned players and current
+    lots are not retainable, and the team must still afford its squad minimum
+    at the unsold price. Go-live materializes each row into an
+    `AuctionPlayer(RETAINED)` (carries `isOverseas`, no `lotOrder`) plus a
+    `TeamPlayer(RETAINED)` and seeds `committedAmount`/`playerCount`, so the
+    reserve math starts from what retention spent. RETAINED lots are counted in
+    `LotCounts` but never appear in the snapshot queue, the RE_AUCTION sweep, or
+    COMPLETED terminalization (§4).

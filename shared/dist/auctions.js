@@ -13,7 +13,14 @@ export const AUCTION_STATUSES = [
 ];
 export const BIDDING_MODES = ["ORGANIZER", "FRANCHISE"];
 export const AUCTION_ROUNDS = ["MAIN", "RE_AUCTION", "ASSIGNMENT"];
-export const LOT_STATUSES = ["PENDING", "ON_BLOCK", "SOLD", "UNSOLD", "ASSIGNED"];
+export const LOT_STATUSES = [
+    "PENDING",
+    "ON_BLOCK",
+    "SOLD",
+    "UNSOLD",
+    "ASSIGNED",
+    "RETAINED",
+];
 // ---- Auction ---------------------------------------------------------------
 export const createAuctionSchema = z.object({
     name: z.string().trim().min(1, "Name is required").max(120),
@@ -36,6 +43,7 @@ export const auctionRulesSchema = z
     unsoldPrice: moneyString,
     defaultBasePrice: positiveMoneyString,
     defaultLotDurationSec: z.coerce.number().int().min(5).max(600).default(30),
+    maxRetentionsPerTeam: z.coerce.number().int().min(0).max(100).default(0),
 })
     .refine((v) => v.maxPlayersPerTeam >= v.minPlayersPerTeam, {
     message: "Max players must be ≥ min players",

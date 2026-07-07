@@ -71,6 +71,7 @@ export async function getAuctionMonitor(req: Request, res: Response): Promise<vo
     SOLD: 0,
     UNSOLD: 0,
     ASSIGNED: 0,
+    RETAINED: 0,
     total: 0,
   };
   for (const g of grouped) {

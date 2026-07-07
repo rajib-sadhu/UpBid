@@ -95,6 +95,7 @@ export async function createAuction(req: Request, res: Response): Promise<void> 
           unsoldPrice: source.rules.unsoldPrice,
           defaultBasePrice: source.rules.defaultBasePrice,
           defaultLotDurationSec: source.rules.defaultLotDurationSec,
+          maxRetentionsPerTeam: source.rules.maxRetentionsPerTeam,
         },
       });
     }
@@ -263,6 +264,7 @@ export async function putRules(req: Request, res: Response): Promise<void> {
     unsoldPrice: money(b.unsoldPrice),
     defaultBasePrice: money(b.defaultBasePrice),
     defaultLotDurationSec: b.defaultLotDurationSec,
+    maxRetentionsPerTeam: b.maxRetentionsPerTeam,
   };
   const rules = await prisma.auctionRules.upsert({
     where: { auctionId: id },
@@ -376,7 +378,7 @@ async function shuffleLotOrderByRole(
   auctionId: string,
 ): Promise<void> {
   const players = await tx.auctionPlayer.findMany({
-    where: { auctionId },
+    where: { auctionId, status: "PENDING" },
     select: {
       id: true,
       player: { select: { cricketRole: true, footballPosition: true, role: true } },
@@ -417,16 +419,21 @@ export async function goLive(req: Request, res: Response): Promise<void> {
     where: { id },
     select: { seasonId: true },
   });
-  const [rules, lotCount, tierCount, seasonFranchises, existingTeams] = await Promise.all([
-    prisma.auctionRules.findUnique({ where: { auctionId: id } }),
-    prisma.auctionPlayer.count({ where: { auctionId: id } }),
-    prisma.bidIncrementTier.count({ where: { auctionId: id } }),
-    prisma.seasonFranchise.findMany({
-      where: { seasonId: auction.seasonId },
-      select: { franchiseId: true },
-    }),
-    prisma.team.findMany({ where: { auctionId: id }, select: { franchiseId: true } }),
-  ]);
+  const [rules, lotCount, tierCount, seasonFranchises, existingTeams, retentions] =
+    await Promise.all([
+      prisma.auctionRules.findUnique({ where: { auctionId: id } }),
+      prisma.auctionPlayer.count({ where: { auctionId: id } }),
+      prisma.bidIncrementTier.count({ where: { auctionId: id } }),
+      prisma.seasonFranchise.findMany({
+        where: { seasonId: auction.seasonId },
+        select: { franchiseId: true },
+      }),
+      prisma.team.findMany({ where: { auctionId: id }, select: { franchiseId: true } }),
+      prisma.auctionRetention.findMany({
+        where: { auctionId: id },
+        include: { franchise: { select: { name: true } } },
+      }),
+    ]);
   if (!rules) throw Errors.invalidState("Set the auction rules before going live");
   if (tierCount === 0)
     throw Errors.invalidState("Add at least one bid-increment tier before going live");
@@ -438,6 +445,57 @@ export async function goLive(req: Request, res: Response): Promise<void> {
       `An auction needs at least 2 teams (selected: ${teamCount}). ` +
         `Pick participating teams on the season page.`,
     );
+  }
+
+  // Re-validate retentions against the final rules/selection (both can change
+  // after the retentions were staged): selected franchise, cap, and the team
+  // must still afford its squad minimum after paying for what it kept.
+  const selectedIds = new Set(seasonFranchises.map((sf) => sf.franchiseId));
+  const byFranchise = new Map<string, typeof retentions>();
+  for (const r of retentions) {
+    if (!selectedIds.has(r.franchiseId)) {
+      throw Errors.invalidState(
+        `"${r.franchise.name}" has retained players but is not in the season's team selection`,
+      );
+    }
+    const list = byFranchise.get(r.franchiseId) ?? [];
+    list.push(r);
+    byFranchise.set(r.franchiseId, list);
+  }
+  for (const [, list] of byFranchise) {
+    if (list.length > rules.maxRetentionsPerTeam) {
+      throw Errors.invalidState(
+        `"${list[0]!.franchise.name}" retains ${list.length} players — the cap is ${rules.maxRetentionsPerTeam}`,
+      );
+    }
+    const total = list.reduce((sum, r) => sum.plus(r.price), money("0"));
+    const remainingMin = Math.max(0, rules.minPlayersPerTeam - list.length);
+    const needed = total.plus(money(rules.unsoldPrice).times(remainingMin));
+    if (needed.greaterThan(rules.creditPerTeam)) {
+      throw Errors.invalidState(
+        `"${list[0]!.franchise.name}" cannot afford its retentions and still reach ` +
+          `${rules.minPlayersPerTeam} players within the ${rules.creditPerTeam} budget`,
+      );
+    }
+  }
+
+  // Overseas flags carry over from the source auction's lots.
+  const sourceOverseas = new Map<string, boolean>();
+  if (retentions.length) {
+    const src = await prisma.auction.findUniqueOrThrow({
+      where: { id },
+      select: { retentionSourceAuctionId: true },
+    });
+    if (src.retentionSourceAuctionId) {
+      const lots = await prisma.auctionPlayer.findMany({
+        where: {
+          auctionId: src.retentionSourceAuctionId,
+          playerId: { in: retentions.map((r) => r.playerId) },
+        },
+        select: { playerId: true, isOverseas: true },
+      });
+      for (const l of lots) sourceOverseas.set(l.playerId, l.isOverseas);
+    }
   }
 
   // Materialize teams from the season's franchises (idempotent).
@@ -454,10 +512,54 @@ export async function goLive(req: Request, res: Response): Promise<void> {
         data: toCreate.map((sf) => ({ auctionId: id, franchiseId: sf.franchiseId })),
       });
     }
+
+    // Materialize retentions: each staged row becomes a RETAINED lot (never in
+    // the bidding queue; carries isOverseas for the lineup cap) plus a squad
+    // TeamPlayer, and seeds the team's committedAmount/playerCount — so the
+    // reserve math starts from what retention already spent.
+    if (byFranchise.size) {
+      const teams = await tx.team.findMany({
+        where: { auctionId: id },
+        select: { id: true, franchiseId: true },
+      });
+      const teamByFranchise = new Map(teams.map((t) => [t.franchiseId, t.id]));
+      for (const [franchiseId, list] of byFranchise) {
+        const teamId = teamByFranchise.get(franchiseId)!;
+        for (const r of list) {
+          const lot = await tx.auctionPlayer.create({
+            data: {
+              auctionId: id,
+              playerId: r.playerId,
+              basePrice: r.price,
+              status: "RETAINED",
+              soldToTeamId: teamId,
+              soldPrice: r.price,
+              isOverseas: sourceOverseas.get(r.playerId) ?? false,
+            },
+          });
+          await tx.teamPlayer.create({
+            data: {
+              teamId,
+              auctionPlayerId: lot.id,
+              playerId: r.playerId,
+              price: r.price,
+              acquiredVia: "RETAINED",
+            },
+          });
+        }
+        const total = list.reduce((sum, r) => sum.plus(r.price), money("0"));
+        await tx.team.update({
+          where: { id: teamId },
+          data: { committedAmount: total, playerCount: list.length },
+        });
+      }
+    }
+
     // One-time shuffle: randomize lot order WITHIN each role so the live
     // sequence isn't the database insertion order. Players are grouped by their
     // role (cricketRole / footballPosition), shuffled inside the group, then
     // laid out group-by-group. Runs once because go-live only fires on DRAFT→LIVE.
+    // RETAINED lots are excluded — they never enter the queue.
     await shuffleLotOrderByRole(tx, id);
     return tx.auction.update({
       where: { id },

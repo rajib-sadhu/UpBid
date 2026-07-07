@@ -27,11 +27,30 @@ test("organizer runs a tiny auction end to end", async ({ page }) => {
   await page.getByRole("link", { name: new RegExp(E2E.liveAuction.name) }).click();
   await expect(page.getByRole("heading", { name: E2E.liveAuction.name })).toBeVisible();
 
+  // Retention: allow 1 per team, retain a previous-season player for E2E Alpha
+  // from the completed lineup auction at an edited price of 3 (was 2).
+  await page.getByLabel("Max retentions / team").fill("1");
+  await page.getByRole("button", { name: "Save rules" }).click();
+  await expect(page.getByText("Rules saved")).toBeVisible();
+
+  await page
+    .getByLabel("Retain from")
+    .selectOption({ label: `${E2E.lineupAuction.name} (${E2E.season.name})` });
+  await page.getByLabel("Retain E2E Squad 01").check();
+  await page.getByLabel("Retention price for E2E Squad 01").fill("3");
+  await page.getByRole("button", { name: "Save retentions" }).first().click();
+  await expect(page.getByText("Retentions saved")).toBeVisible();
+
   // DRAFT → LIVE, then into the live room.
   await page.getByRole("button", { name: "Go live →" }).click();
   await expect(page.getByText("Auction is now LIVE.")).toBeVisible();
   await page.getByRole("link", { name: "Open live auction →" }).click();
   await expect(page.getByRole("heading", { name: E2E.liveAuction.name })).toBeVisible();
+
+  // The retention materialized: Alpha starts with 1 player, 3 cr spent, and
+  // the lots board reports the retained count.
+  await expect(page.getByText("Spent 3 cr").first()).toBeVisible();
+  await expect(page.getByText(/1 retained/)).toBeVisible();
 
   // Lot 1: open, organizer bids on behalf of both teams, sells to the leader.
   // Lot order is randomized at go-live, so never assert a specific player —

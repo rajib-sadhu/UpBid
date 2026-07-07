@@ -16,6 +16,7 @@ import { CricketSquadTargetsCard } from "./sections/CricketSquadTargetsCard.js";
 import { TeamsCard } from "./sections/TeamsCard.js";
 import { FormationsCard } from "./sections/FormationsCard.js";
 import { LotsCard } from "./sections/LotsCard.js";
+import { RetentionsCard } from "./sections/RetentionsCard.js";
 
 const STATUS_STYLES: Record<string, string> = {
   DRAFT: "bg-slate-500/15 text-slate-300",
@@ -201,6 +202,8 @@ export function AuctionSetupPage() {
       </div>
 
       <TeamsCard seasonId={detail.seasonId} />
+
+      <RetentionsCard auctionId={id} detail={detail} disabled={disabled} onChanged={loadAll} />
 
       <LotsCard
         auctionId={id}

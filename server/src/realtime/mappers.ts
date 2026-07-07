@@ -120,7 +120,14 @@ export function toLiveLot(lot: LotWithPlayer): LiveLot {
   };
 }
 
-const EMPTY_COUNTS: LotCounts = { PENDING: 0, ON_BLOCK: 0, SOLD: 0, UNSOLD: 0, ASSIGNED: 0 };
+const EMPTY_COUNTS: LotCounts = {
+  PENDING: 0,
+  ON_BLOCK: 0,
+  SOLD: 0,
+  UNSOLD: 0,
+  ASSIGNED: 0,
+  RETAINED: 0,
+};
 
 /** Fold a Prisma groupBy(status) result into the LotCounts shape. */
 export function toLotCounts(grouped: { status: keyof LotCounts; _count: number }[]): LotCounts {

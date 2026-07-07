@@ -166,5 +166,25 @@ No schema change. Branch `phase-9-hardening`.
       `prisma migrate deploy` onto a fresh DB → integration tests → production
       build; separate e2e job (Playwright + report artifact on failure).
 
+## Feature — Pre-auction retention ✅ (awaiting review)
+Schema change (flagged): `AuctionRetention` model, `Auction.retentionSourceAuctionId`,
+`AuctionRules.maxRetentionsPerTeam`, `RETAINED` in `LotStatus` + `AcquisitionType`
+(migration `20260707174203_auction_retention`; docs/schema.prisma synced).
+
+- [x] Organizer-only, DRAFT-only retention: pick a COMPLETED source auction of
+      the league, tick players per team, edit prices (default = previous cost).
+- [x] Guards: cap per team, banned players, lot-list conflicts (both ways),
+      one-team-per-player, and affordability (retentions + remaining minimum at
+      unsold price ≤ credit) — re-validated at go-live.
+- [x] Go-live materialization: `AuctionPlayer(RETAINED)` (isOverseas carried,
+      excluded from the shuffle/queue/sweep) + `TeamPlayer(RETAINED)` + seeded
+      team tallies, so reserve math/monitor/lineups just work.
+- [x] Client: Retentions card on auction setup (source picker, per-team squad
+      checklists with price inputs, cap/total feedback); "Max retentions / team"
+      in the rules card; retained count on the live lots board.
+- [x] Verify: typecheck + lint clean; 88 unit; 17/17 integration (6 new
+      retention tests: source gating, read model, all rejection paths, go-live
+      materialization, live-lock); architecture.md §4 + changelog updated.
+
 ## Later
 - Phase 10 — Deploy (PM2/systemd config, deploy docs, backup story).

@@ -80,7 +80,13 @@ export type ServerEvent = (typeof SERVER_EVENTS)[keyof typeof SERVER_EVENTS];
 
 // ---- Shared enums ----------------------------------------------------------
 
-export const ACQUISITION_TYPES = ["AUCTION", "REAUCTION", "CHOSEN", "FORCE_ASSIGNED"] as const;
+export const ACQUISITION_TYPES = [
+  "AUCTION",
+  "REAUCTION",
+  "CHOSEN",
+  "FORCE_ASSIGNED",
+  "RETAINED",
+] as const;
 export type AcquisitionType = (typeof ACQUISITION_TYPES)[number];
 
 /** The three timer states of a lot on the block (§7 of architecture.md). */
@@ -260,6 +266,8 @@ export interface LotCounts {
   SOLD: number;
   UNSOLD: number;
   ASSIGNED: number;
+  /** Pre-auction retentions; never in the bidding queue. */
+  RETAINED: number;
 }
 
 export interface StateSnapshot {

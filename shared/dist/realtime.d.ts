@@ -49,7 +49,7 @@ export declare const SERVER_EVENTS: {
     readonly ERROR: "ERROR";
 };
 export type ServerEvent = (typeof SERVER_EVENTS)[keyof typeof SERVER_EVENTS];
-export declare const ACQUISITION_TYPES: readonly ["AUCTION", "REAUCTION", "CHOSEN", "FORCE_ASSIGNED"];
+export declare const ACQUISITION_TYPES: readonly ["AUCTION", "REAUCTION", "CHOSEN", "FORCE_ASSIGNED", "RETAINED"];
 export type AcquisitionType = (typeof ACQUISITION_TYPES)[number];
 /** The three timer states of a lot on the block (§7 of architecture.md). */
 export type TimerState = "BIDDING" | "FROZEN" | "PAUSED";
@@ -269,6 +269,8 @@ export interface LotCounts {
     SOLD: number;
     UNSOLD: number;
     ASSIGNED: number;
+    /** Pre-auction retentions; never in the bidding queue. */
+    RETAINED: number;
 }
 export interface StateSnapshot {
     seq: number;

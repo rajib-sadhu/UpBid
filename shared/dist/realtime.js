@@ -68,7 +68,13 @@ export const SERVER_EVENTS = {
     ERROR: "ERROR",
 };
 // ---- Shared enums ----------------------------------------------------------
-export const ACQUISITION_TYPES = ["AUCTION", "REAUCTION", "CHOSEN", "FORCE_ASSIGNED"];
+export const ACQUISITION_TYPES = [
+    "AUCTION",
+    "REAUCTION",
+    "CHOSEN",
+    "FORCE_ASSIGNED",
+    "RETAINED",
+];
 /** Phases the organizer can advance to over the socket (DRAFT→LIVE is REST). */
 export const PHASE_TARGETS = ["RE_AUCTION", "ASSIGNMENT", "COMPLETED"];
 // ---- Client → server payload schemas (validated server-side) ---------------

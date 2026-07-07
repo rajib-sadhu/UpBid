@@ -64,6 +64,7 @@ enum LotStatus {
   SOLD
   UNSOLD
   ASSIGNED
+  RETAINED // pre-auction retention; never enters the bidding queue
 }
 
 enum AcquisitionType {
@@ -71,6 +72,7 @@ enum AcquisitionType {
   REAUCTION
   CHOSEN
   FORCE_ASSIGNED
+  RETAINED // kept from a previous completed auction of the league
 }
 
 // Structured football position (lives on Player; only the GK slot is locked).
@@ -204,6 +206,7 @@ model Franchise {
 
   teams            Team[]
   seasonFranchises SeasonFranchise[]
+  retentions       AuctionRetention[]
 
   @@unique([leagueId, shortName])
   @@unique([leagueId, ownerUserId])
@@ -267,6 +270,7 @@ model Player {
   leagueStatuses PlayerLeagueStatus[]
   auctionEntries AuctionPlayer[]
   acquisitions   TeamPlayer[]
+  retentions     AuctionRetention[]
 
   @@index([sport])
 }
@@ -308,6 +312,12 @@ model Auction {
   currentAuctionPlayer   AuctionPlayer? @relation("CurrentLot", fields: [currentAuctionPlayerId], references: [id])
   currentLotEndsAt       DateTime?
 
+  // Pre-auction retention: the organizer-picked COMPLETED auction (same league)
+  // whose squads teams may retain players from. Null = retention not configured.
+  retentionSourceAuctionId String?
+  retentionSourceAuction   Auction?  @relation("RetentionSource", fields: [retentionSourceAuctionId], references: [id])
+  retentionTargets         Auction[] @relation("RetentionSource")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -319,6 +329,7 @@ model Auction {
   lineupRules         LineupRules?
   allowedFormations   AuctionAllowedFormation[]
   cricketSquadTargets CricketSquadTargets?
+  retentions          AuctionRetention[]
 
   @@index([seasonId])
   @@index([status])
@@ -334,6 +345,7 @@ model AuctionRules {
   unsoldPrice           Decimal @db.Decimal(14, 2)
   defaultBasePrice      Decimal @default(2) @db.Decimal(14, 2)
   defaultLotDurationSec Int     @default(30)
+  maxRetentionsPerTeam  Int     @default(0) // 0 = pre-auction retention disabled
 }
 
 // Per-auction cricket squad-composition targets, consumed by the auto-pilot bot
@@ -385,6 +397,27 @@ model Team {
 
   @@unique([auctionId, franchiseId])
   @@index([auctionId])
+}
+
+// Pre-auction retention (organizer-configured while DRAFT). Staged against the
+// franchise because Team rows only materialize at go-live, when each row here
+// becomes an AuctionPlayer(RETAINED) + TeamPlayer(RETAINED) and seeds the
+// team's committedAmount/playerCount. Price defaults to what the player cost
+// in the source auction and is organizer-editable.
+model AuctionRetention {
+  id          String    @id @default(cuid())
+  auctionId   String
+  auction     Auction   @relation(fields: [auctionId], references: [id])
+  franchiseId String
+  franchise   Franchise @relation(fields: [franchiseId], references: [id])
+  playerId    String
+  player      Player    @relation(fields: [playerId], references: [id])
+  price       Decimal   @db.Decimal(14, 2)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([auctionId, playerId]) // a player can be retained by only one team
+  @@index([auctionId, franchiseId])
 }
 
 model AuctionPlayer {

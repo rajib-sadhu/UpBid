@@ -8,6 +8,7 @@ export * from "./money.js";
 export * from "./auth.js";
 export * from "./leagues.js";
 export * from "./franchise.js";
+export * from "./retentions.js";
 export * from "./seasons.js";
 export * from "./players.js";
 export * from "./auctions.js";

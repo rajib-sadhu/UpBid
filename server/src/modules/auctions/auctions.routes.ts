@@ -8,6 +8,8 @@ import {
   allowedFormationsSchema,
   addLotsSchema,
   updateLotSchema,
+  retentionSourceSchema,
+  franchiseRetentionsSchema,
 } from "shared";
 import { authenticate, requireOwnership } from "../../auth/middleware.js";
 import { validateBody } from "../../middleware/validate.js";
@@ -16,6 +18,7 @@ import { auctionOwnerId } from "./auctions.service.js";
 import * as a from "./auctions.controller.js";
 import * as teams from "./teams.controller.js";
 import * as lots from "./lots.controller.js";
+import * as retentions from "./retentions.controller.js";
 
 const router = Router();
 router.use(authenticate);
@@ -58,6 +61,21 @@ router.put(
   asyncHandler(a.putAllowedFormations),
 );
 router.post("/:id/go-live", own, asyncHandler(a.goLive));
+
+// Pre-auction retention (DRAFT only — enforced in the controllers)
+router.get("/:id/retentions", own, asyncHandler(retentions.getRetentionConfig));
+router.put(
+  "/:id/retention-source",
+  own,
+  validateBody(retentionSourceSchema),
+  asyncHandler(retentions.putRetentionSource),
+);
+router.put(
+  "/:id/franchises/:franchiseId/retentions",
+  own,
+  validateBody(franchiseRetentionsSchema),
+  asyncHandler(retentions.putFranchiseRetentions),
+);
 
 // Teams (read-only participants; materialized at go-live from season franchises)
 router.get("/:id/teams", own, asyncHandler(teams.listTeams));

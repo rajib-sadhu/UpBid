@@ -45,6 +45,7 @@ export function toRules(r: AuctionRules): AuctionRulesDTO {
     unsoldPrice: moneyToWire(r.unsoldPrice),
     defaultBasePrice: moneyToWire(r.defaultBasePrice),
     defaultLotDurationSec: r.defaultLotDurationSec,
+    maxRetentionsPerTeam: r.maxRetentionsPerTeam,
   };
 }
 

@@ -835,7 +835,8 @@ function LotQueue({
       <span className="text-xs text-slate-500">
         {auction.status === "ASSIGNMENT"
           ? `${c.PENDING + c.UNSOLD} left to assign · ${c.ASSIGNED} assigned`
-          : `${c.PENDING} pending · ${c.SOLD} sold · ${c.UNSOLD} unsold · ${c.ASSIGNED} assigned`}
+          : `${c.PENDING} pending · ${c.SOLD} sold · ${c.UNSOLD} unsold · ${c.ASSIGNED} assigned` +
+            (c.RETAINED > 0 ? ` · ${c.RETAINED} retained` : "")}
       </span>
     </div>
   );

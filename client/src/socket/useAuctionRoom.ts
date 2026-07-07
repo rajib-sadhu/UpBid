@@ -89,8 +89,9 @@ function setLotStatus(
   return items.map((l) => (l.auctionPlayerId === auctionPlayerId ? { ...l, status } : l));
 }
 
-function recount(items: LiveLot[]): LotCounts {
-  const c: LotCounts = { PENDING: 0, ON_BLOCK: 0, SOLD: 0, UNSOLD: 0, ASSIGNED: 0 };
+function recount(items: LiveLot[], retained: number): LotCounts {
+  // RETAINED lots never appear in the queue items — carry the count through.
+  const c: LotCounts = { PENDING: 0, ON_BLOCK: 0, SOLD: 0, UNSOLD: 0, ASSIGNED: 0, RETAINED: retained };
   for (const l of items) c[l.status] += 1;
   return c;
 }
@@ -151,7 +152,11 @@ export function useAuctionRoom(auctionId: string | undefined): AuctionRoom {
       [SERVER_EVENTS.LOT_OPENED]: (ev: LotOpenedEvent) =>
         onDelta(ev, (s) => {
           const items = setLotStatus(s.lots.items, ev.currentLot.auctionPlayerId, "ON_BLOCK");
-          return { ...s, currentLot: ev.currentLot, lots: { counts: recount(items), items } };
+          return {
+            ...s,
+            currentLot: ev.currentLot,
+            lots: { counts: recount(items, s.lots.counts.RETAINED), items },
+          };
         }),
       [SERVER_EVENTS.LOT_TIMER_EXPIRED]: (ev: LotTimerExpiredEvent) =>
         onDelta(ev, (s) => ({
