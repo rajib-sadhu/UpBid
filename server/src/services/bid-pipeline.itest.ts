@@ -18,7 +18,7 @@ import type { AuthUser } from "../auth/types.js";
 const dec = (v: string) => new Prisma.Decimal(v);
 
 function bidder(g: SeededGraph, i: number): { user: AuthUser; teamId: string } {
-  return { user: { id: g.owners[i].id, role: "FRANCHISE" }, teamId: g.teams[i].id };
+  return { user: { id: g.owners[i]!.id, role: "FRANCHISE" }, teamId: g.teams[i]!.id };
 }
 
 /** Fire one bid; resolve to "ACCEPTED" or the rejection code. */
@@ -52,7 +52,7 @@ describe("bid pipeline vs real MySQL — no double-accept", () => {
 
   beforeAll(async () => {
     g = await seedAuctionGraph(prisma, { tag: `cas${Date.now().toString(36)}`, teams: 4 });
-    lotId = g.lots[0].id;
+    lotId = g.lots[0]!.id;
     await openLot(g.auction.id, lotId);
   });
 
@@ -103,7 +103,7 @@ describe("bid pipeline vs real MySQL — no double-accept", () => {
       expect(b.amount.equals(dec("2").plus(dec("0.5").times(i)))).toBe(true);
     });
     // The leader is the team that placed the final accepted bid.
-    expect(lot.leadingTeamId).toBe(bids[bids.length - 1].teamId);
+    expect(lot.leadingTeamId).toBe(bids[bids.length - 1]!.teamId);
     expect(lot.currentPrice?.equals(dec("7"))).toBe(true);
   });
 
@@ -134,7 +134,7 @@ describe("bid pipeline vs real MySQL — no double-accept", () => {
       players: 1,
       rules: { creditPerTeam: "2.5" },
     });
-    const tightLot = tight.lots[0].id;
+    const tightLot = tight.lots[0]!.id;
     await openLot(tight.auction.id, tightLot);
 
     expect(await tryBid(tight, 0, tightLot, "2", 0, "rsv-open")).toBe("ACCEPTED");

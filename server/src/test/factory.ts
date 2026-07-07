@@ -96,9 +96,9 @@ export async function seedAuctionGraph(
       data: {
         leagueId: league.id,
         name: `Team ${CODES[i]} ${tag}`,
-        shortName: CODES[i],
+        shortName: CODES[i]!,
         primaryColor: "#2563eb",
-        ownerUserId: owners[i].id,
+        ownerUserId: owners[i]!.id,
       },
     });
     await prisma.seasonFranchise.create({
