@@ -3,7 +3,7 @@ import type { SquadPlayer, LineupMemberDTO, LineupDTO } from "shared";
 import { moneyToWire } from "../../lib/money.js";
 
 type SquadRow = TeamPlayer & {
-  player: Pick<Player, "id" | "name" | "footballPosition">;
+  player: Pick<Player, "id" | "name" | "footballPosition" | "cricketRole" | "bowlingStyle">;
   auctionPlayer: Pick<AuctionPlayer, "isOverseas">;
 };
 
@@ -13,6 +13,8 @@ export function toSquadPlayer(tp: SquadRow): SquadPlayer {
     playerId: tp.playerId,
     playerName: tp.player.name,
     footballPosition: tp.player.footballPosition,
+    cricketRole: tp.player.cricketRole,
+    bowlingStyle: tp.player.bowlingStyle,
     isOverseas: tp.auctionPlayer.isOverseas,
     price: moneyToWire(tp.price),
     acquiredVia: tp.acquiredVia,
@@ -29,6 +31,8 @@ export function toLineupMemberDTO(m: MemberRow): LineupMemberDTO {
     playerId: m.teamPlayer.playerId,
     playerName: m.teamPlayer.player.name,
     footballPosition: m.teamPlayer.player.footballPosition,
+    cricketRole: m.teamPlayer.player.cricketRole,
+    bowlingStyle: m.teamPlayer.player.bowlingStyle,
     isOverseas: m.teamPlayer.auctionPlayer.isOverseas,
     membership: m.membership,
     battingOrder: m.battingOrder,

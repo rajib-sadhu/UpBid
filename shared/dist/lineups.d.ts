@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type Sport, type FootballPosition } from "./sports.js";
+import type { CricketRole, BowlingStyle } from "./players.js";
 import type { Formation } from "./lots.js";
 import type { AcquisitionType } from "./realtime.js";
 export declare const LINEUP_STATUSES: readonly ["DRAFT", "LOCKED"];
@@ -112,6 +113,8 @@ export interface SquadPlayer {
     playerId: string;
     playerName: string;
     footballPosition: FootballPosition | null;
+    cricketRole: CricketRole | null;
+    bowlingStyle: BowlingStyle | null;
     isOverseas: boolean;
     price: string;
     acquiredVia: AcquisitionType;
@@ -121,6 +124,8 @@ export interface LineupMemberDTO {
     playerId: string;
     playerName: string;
     footballPosition: FootballPosition | null;
+    cricketRole: CricketRole | null;
+    bowlingStyle: BowlingStyle | null;
     isOverseas: boolean;
     membership: LineupMembership;
     battingOrder: number | null;

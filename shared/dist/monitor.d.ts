@@ -1,5 +1,6 @@
 import type { Sport } from "./sports.js";
 import type { AuctionStatus, AuctionRound, BiddingMode } from "./auctions.js";
+import type { CricketRole, BowlingStyle } from "./players.js";
 import type { AcquisitionType } from "./realtime.js";
 import type { LineupStatus } from "./lineups.js";
 export interface MonitorSquadPlayer {
@@ -8,6 +9,9 @@ export interface MonitorSquadPlayer {
     playerName: string;
     photoUrl: string | null;
     role: string | null;
+    /** Structured cricket role for icon rendering (role stays the text fallback). */
+    cricketRole: CricketRole | null;
+    bowlingStyle: BowlingStyle | null;
     footballPosition: string | null;
     isOverseas: boolean;
     /** Crore-units string. */
@@ -66,6 +70,11 @@ export interface AuctionMonitor {
     teams: MonitorTeam[];
     /** True for the organizer-owner / super-admin (may also control the auction). */
     canManage: boolean;
+    /**
+     * Live-room connection state (canManage only): userId → last round-trip ms
+     * (null = connected, unmeasured). Absent user = offline / not in the room.
+     */
+    presence?: Record<string, number | null>;
 }
 export interface MyTeamSummary {
     teamId: string;

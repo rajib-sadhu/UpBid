@@ -53,6 +53,7 @@ export async function openLot(
       endsAt,
       remainingMs: null,
     },
+    auction.rules.unsoldPrice,
   );
   return { currentLot, endsAt };
 }

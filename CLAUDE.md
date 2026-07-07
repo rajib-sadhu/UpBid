@@ -26,7 +26,8 @@ This was confirmed with the user on 2026-06-24.
 - `docs/schema.prisma` — complete data model. **Authoritative; use verbatim.**
 - `docs/lineup-design.md` — lineup model + exact per-sport validation rules + error codes.
 - `docs/architecture.md` — real-time/Socket.io design, server-authoritative bidding,
-  reserve math, auction state machine. **⚠️ NOT YET PROVIDED — required before Phase 5.**
+  reserve math, auction state machine, auto-pilot bots, presence. Kept current
+  (last updated 2026-07-04) — update it in the same commit as protocol/state-machine changes.
 - `docs/build-plan.md` — the master phased plan.
 
 ## Working rules (from the build plan)

@@ -59,6 +59,20 @@ export function requiredIncrement(currentPrice: Money, tiers: IncrementTier[]): 
 }
 
 /**
+ * Where bidding starts for a lot: a re-auction lot opens at the auction's
+ * unsold price instead of the player's original base price (a player nobody
+ * wanted at base gets a genuinely cheaper second chance). All bid-price
+ * producers (validation, snapshots, the bot engine) must agree on this.
+ */
+export function openingPrice(
+  round: "MAIN" | "RE_AUCTION" | "ASSIGNMENT",
+  basePrice: Money,
+  unsoldPrice: Money,
+): Money {
+  return round === "RE_AUCTION" ? unsoldPrice : basePrice;
+}
+
+/**
  * The exact amount the next bid must equal: the base price for the first bid on
  * a lot (currentPrice == null), otherwise currentPrice + the applicable
  * increment. Bids must match this exactly (no "≥").

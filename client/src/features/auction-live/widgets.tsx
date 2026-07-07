@@ -22,12 +22,17 @@ export function PlayerIcon({ name, photoUrl }: { name: string; photoUrl: string 
   );
 }
 
+/** Display name for an auction status (RE_AUCTION reads as the unsold auction). */
+export function statusLabel(status: string): string {
+  return status === "RE_AUCTION" ? "UNSOLD AUCTION" : status;
+}
+
 export function StatusBadge({ status }: { status: string }) {
   return (
     <span
       className={`hud-label rounded px-2 py-0.5 text-xs ${STATUS_STYLES[status] ?? "bg-slate-700/40"}`}
     >
-      {status}
+      {statusLabel(status)}
     </span>
   );
 }

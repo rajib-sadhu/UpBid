@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createOrganizerSchema, createFranchiseUserSchema } from "shared";
+import { createOrganizerSchema, createFranchiseUserSchema, resetPasswordSchema } from "shared";
 import { authenticate, requireRole, requireOwnership } from "../../auth/middleware.js";
 import { validateBody } from "../../middleware/validate.js";
 import { asyncHandler } from "../../lib/async-handler.js";
@@ -24,6 +24,21 @@ router.post(
 );
 
 router.get("/", requireRole("SUPER_ADMIN", "ORGANIZER"), asyncHandler(ctrl.listUsers));
+
+// Only the creating account (or SUPER_ADMIN) may reset a password — the holder
+// changes their own via /api/auth/change-password.
+router.post(
+  "/:id/reset-password",
+  requireRole("SUPER_ADMIN", "ORGANIZER"),
+  requireOwnership(async (req) => {
+    const id = req.params.id;
+    if (!id) return null;
+    const target = await prisma.user.findUnique({ where: { id }, select: { createdById: true } });
+    return target?.createdById ?? null;
+  }),
+  validateBody(resetPasswordSchema),
+  asyncHandler(ctrl.resetPassword),
+);
 
 // Self or the creating organizer may view; SUPER_ADMIN bypasses ownership.
 router.get(

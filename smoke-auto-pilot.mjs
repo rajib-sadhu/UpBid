@@ -7,9 +7,11 @@
 // auction to the bot engine over Socket.io and asserts:
 //   1. the run reaches COMPLETED,
 //   2. every team meets the minimum squad size,
-//   3. the all-full short-circuit fired (PENDING lots remain un-opened) — i.e. the
-//      engine did NOT grind every remaining lot as unsold once squads were full,
-//   4. bidding actually happened and some lots went unsold/left (natural).
+//   3. bidding actually happened AND some lots went genuinely UNSOLD (bots pass
+//      on players they don't rate — value-driven passing),
+//   4. AUTO_STOP mid-run freezes the bots immediately (no further bids) and a
+//      subsequent AUTO_START resumes the same run to completion,
+//   5. the engine did not need to open every lot (capacity < pool).
 // Cleans up everything it created at the end.
 
 import { io } from "socket.io-client";
@@ -87,8 +89,10 @@ async function main() {
   const AID = auction.id;
   const MIN = 5;
   const MAX = 6; // tight cap so 4 teams (24 slots) fill up before the pool drains
+  // Credit 60 → par ≈ 10/slot for a 6-player squad, so budget-driven bidding
+  // has real room without silly numbers.
   await api("PUT", `/api/auctions/${AID}/rules`, tok, {
-    creditPerTeam: "200",
+    creditPerTeam: "60",
     minPlayersPerTeam: MIN,
     maxPlayersPerTeam: MAX,
     unsoldPrice: "0.5",
@@ -138,17 +142,29 @@ async function main() {
   await api("POST", `/api/auctions/${AID}/go-live`, tok);
 
   // --- Drive the auto-pilot over Socket.io --------------------------------
+  // Mid-run we also exercise the Stop Auto freeze: after the 2nd lot opens we
+  // emit AUTO_STOP, verify the bots fall silent (≤1 in-flight bid), then
+  // AUTO_START again and let the same run continue to completion.
   const counts = { LOT_OPENED: 0, BID_ACCEPTED: 0, LOT_SOLD: 0, LOT_UNSOLD: 0, PLAYER_ASSIGNED: 0 };
+  const stopTest = { stopped: false, restarted: false, frozeOk: false };
+  const openedSections = []; // role section of each opened lot, in order
+  const reauctionOpens = []; // requiredNextBid of lots opened in RE_AUCTION
+  const sectionOf = (cl) =>
+    cl.cricketRole === "BOWLER"
+      ? cl.bowlingStyle === "SPINNER"
+        ? "SPIN"
+        : "PACE"
+      : cl.cricketRole;
   const finished = await new Promise((resolve, reject) => {
     const sock = io(BASE, { auth: { token: tok }, transports: ["websocket"] });
     const timer = setTimeout(() => {
       sock.close();
-      reject(new Error("timed out waiting for AUTO_FINISHED (420s)"));
-    }, 420_000);
+      reject(new Error("timed out waiting for AUTO_FINISHED (540s)"));
+    }, 540_000);
 
     sock.on("connect", () => sock.emit("AUCTION_JOIN", { auctionId: AID }));
     let started = false;
-    sock.on("STATE_SNAPSHOT", (snap) => {
+    sock.on("STATE_SNAPSHOT", () => {
       if (!started) {
         started = true;
         sock.emit("AUTO_START", { auctionId: AID });
@@ -156,6 +172,29 @@ async function main() {
       }
     });
     for (const ev of Object.keys(counts)) sock.on(ev, () => counts[ev]++);
+
+    sock.on("LOT_OPENED", (ev) => {
+      openedSections.push(sectionOf(ev.currentLot));
+      if (ev.currentLot.round === "RE_AUCTION") reauctionOpens.push(ev.currentLot.requiredNextBid);
+      if (counts.LOT_OPENED === 2 && !stopTest.stopped) {
+        stopTest.stopped = true;
+        sock.emit("AUTO_STOP", { auctionId: AID });
+        console.log("  AUTO_STOP sent mid-lot; checking the freeze…");
+      }
+    });
+    sock.on("AUTO_STOPPED", () => {
+      const bidsAtStop = counts.BID_ACCEPTED;
+      setTimeout(() => {
+        // Frozen means silence: at most one in-flight bid may have landed.
+        stopTest.frozeOk = counts.BID_ACCEPTED - bidsAtStop <= 1;
+        stopTest.restarted = true;
+        sock.emit("AUTO_START", { auctionId: AID });
+        console.log(
+          `  freeze held for 5s (${counts.BID_ACCEPTED - bidsAtStop} stray bids); restarting…`,
+        );
+      }, 5000);
+    });
+
     sock.on("AUTO_FINISHED", (rep) => {
       clearTimeout(timer);
       sock.close();
@@ -195,10 +234,37 @@ async function main() {
   );
   ok(counts.BID_ACCEPTED > 0, "bots actually bid (BID_ACCEPTED > 0)");
   ok(
-    pending > 0,
-    `all-full short-circuit fired — ${pending} lots left un-opened (not ground out as unsold)`,
+    counts.BID_ACCEPTED >= counts.LOT_SOLD * 2,
+    `bidding was contested (${counts.BID_ACCEPTED} bids over ${counts.LOT_SOLD} sales — avg ${(counts.BID_ACCEPTED / Math.max(1, counts.LOT_SOLD)).toFixed(1)}/lot)`,
   );
-  ok(counts.LOT_OPENED < lots.length, `did not open all ${lots.length} lots (${counts.LOT_OPENED})`);
+  ok(
+    counts.LOT_UNSOLD > 0,
+    `bots pass on players they don't rate — ${counts.LOT_UNSOLD} lots went unsold naturally`,
+  );
+  ok(stopTest.stopped && stopTest.frozeOk, "AUTO_STOP froze the bots immediately");
+  ok(stopTest.restarted, "AUTO_START resumed the run after the stop");
+  ok(
+    pending + counts.LOT_UNSOLD > 0 && counts.LOT_OPENED <= lots.length,
+    `pool exceeded demand — ${pending} pending / ${counts.LOT_UNSOLD} unsold after ${counts.LOT_OPENED} opens`,
+  );
+  const firstFive = new Set(openedSections.slice(0, 5));
+  ok(
+    firstFive.size >= 4,
+    `lots rotate role sections — first 5 opens covered ${firstFive.size} sections (${[...firstFive].join(", ")})`,
+  );
+  ok(
+    reauctionOpens.length === 0 || reauctionOpens.every((p) => Number(p) === 0.5),
+    `re-auction bidding starts at the unsold price (${reauctionOpens.length} lots opened @ ${reauctionOpens[0] ?? "n/a"})`,
+  );
+
+  const monitor = await api("GET", `/api/monitor/auctions/${AID}`, tok);
+  const spends = monitor.teams.map((t) => Number(t.committedAmount) / 60);
+  const avgSpend = spends.reduce((a, b) => a + b, 0) / spends.length;
+  console.log(`  spend: ${spends.map((s) => `${Math.round(s * 100)}%`).join(" · ")}`);
+  ok(
+    avgSpend >= 0.5,
+    `teams use their credit — average spend ${Math.round(avgSpend * 100)}% of 60`,
+  );
 
   // --- Cleanup ------------------------------------------------------------
   try {

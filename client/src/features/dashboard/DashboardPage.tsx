@@ -32,7 +32,9 @@ const LINEUP_LABEL: Record<string, string> = {
 
 function StatusChip({ status }: { status: string }) {
   return (
-    <span className={`rounded px-2 py-0.5 text-xs ${STATUS_STYLES[status] ?? ""}`}>{status}</span>
+    <span className={`rounded px-2 py-0.5 text-xs ${STATUS_STYLES[status] ?? ""}`}>
+      {status === "RE_AUCTION" ? "UNSOLD AUCTION" : status}
+    </span>
   );
 }
 

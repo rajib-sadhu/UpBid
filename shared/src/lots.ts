@@ -2,6 +2,7 @@ import { z } from "zod";
 import { moneyString } from "./money.js";
 import type { Sport, FootballPosition } from "./sports.js";
 import type { LotStatus, AuctionRound } from "./auctions.js";
+import type { CricketRole, BowlingStyle } from "./players.js";
 
 // Add one or more players to the lot list with a base price.
 export const addLotsSchema = z.object({
@@ -37,6 +38,8 @@ export interface Lot {
   playerName: string;
   sport: Sport;
   footballPosition: FootballPosition | null;
+  cricketRole: CricketRole | null;
+  bowlingStyle: BowlingStyle | null;
   basePrice: string;
   isOverseas: boolean;
   status: LotStatus;

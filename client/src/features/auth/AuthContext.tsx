@@ -9,6 +9,10 @@ interface AuthState {
   loading: boolean;
   login: (input: LoginInput) => Promise<void>;
   logout: () => void;
+  /** Swap in a fresh token+user (e.g. after a password change). */
+  adoptSession: (session: LoginResponse) => void;
+  /** Replace the cached user after a profile edit (token unchanged). */
+  updateUser: (user: PublicUser) => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -43,8 +47,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
+  function adoptSession(session: LoginResponse): void {
+    setToken(session.token);
+    setUser(session.user);
+  }
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, loading, login, logout, adoptSession, updateUser: setUser }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 

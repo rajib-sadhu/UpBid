@@ -24,10 +24,15 @@ export const CLIENT_EVENTS = {
     TIMER_RESUME: "TIMER_RESUME",
     PHASE_ADVANCE: "PHASE_ADVANCE",
     ASSIGN_PLAYER: "ASSIGN_PLAYER",
+    // Organizer toggles a team out of / back into the assignment pick rotation
+    // (an absent team must not stall everyone else's turns).
+    ASSIGN_SKIP: "ASSIGN_SKIP",
     // Auto-pilot: organizer hands the whole auction to the server bot engine.
-    // There is no separate stop event — AUCTION_SUSPEND / AUCTION_CANCEL are the
-    // kill-switch that breaks the loop.
+    // AUTO_STOP freezes the bots immediately (the auction stays LIVE and the
+    // organizer takes manual control; AUTO_START may resume later, even mid-lot).
+    // AUCTION_SUSPEND / AUCTION_CANCEL remain the whole-auction kill-switch.
     AUTO_START: "AUTO_START",
+    AUTO_STOP: "AUTO_STOP",
     // Whole-auction lifecycle (organizer; broadcast a fresh snapshot).
     AUCTION_SUSPEND: "AUCTION_SUSPEND",
     AUCTION_RESUME: "AUCTION_RESUME",
@@ -43,12 +48,23 @@ export const SERVER_EVENTS = {
     LOT_SOLD: "LOT_SOLD",
     LOT_UNSOLD: "LOT_UNSOLD",
     PLAYER_ASSIGNED: "PLAYER_ASSIGNED",
+    // Assignment pick rotation changed without a player moving (organizer skip).
+    ASSIGN_TURN: "ASSIGN_TURN",
     TIMER_PAUSED: "TIMER_PAUSED",
     TIMER_RESUMED: "TIMER_RESUMED",
     PHASE_CHANGED: "PHASE_CHANGED",
     // Auto-pilot finished (reached COMPLETED or stopped short); carries the
     // best-effort squad-composition report.
     AUTO_FINISHED: "AUTO_FINISHED",
+    // Auto-pilot was stopped by the organizer mid-run: bots freeze in place, the
+    // auction stays live and manual control returns (no report — nothing ended).
+    AUTO_STOPPED: "AUTO_STOPPED",
+    // Connection-quality probe: emitted per socket with an ack callback the
+    // client must invoke immediately; the round trip is the user's latency.
+    PRESENCE_PING: "PRESENCE_PING",
+    // Per-auction connection report, sent only to the auction's organizer/admin
+    // sockets every few seconds. No seq — display-only, not auction state.
+    PRESENCE: "PRESENCE",
     ERROR: "ERROR",
 };
 // ---- Shared enums ----------------------------------------------------------
@@ -82,7 +98,12 @@ export const assignPlayerSchema = z.object({
     auctionPlayerId: z.string().min(1),
     teamId: z.string().min(1),
 });
+export const assignSkipSchema = z.object({
+    auctionId: z.string().min(1),
+    teamId: z.string().min(1),
+});
 export const autoStartSchema = z.object({ auctionId: z.string().min(1) });
+export const autoStopSchema = z.object({ auctionId: z.string().min(1) });
 // ---- Auto-pilot report -----------------------------------------------------
 /** A single squad-composition role line in the best-effort auto-pilot report. */
 export const SQUAD_ROLE_KEYS = [

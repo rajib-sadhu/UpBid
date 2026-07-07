@@ -4,6 +4,7 @@ import { apiFetch, ApiClientError } from "../../../api/client.js";
 import { Button } from "../../../components/ui/button.js";
 import { Input } from "../../../components/ui/input.js";
 import { Card } from "../../../components/ui/card.js";
+import { CricketRoleIcon } from "../../../components/ui/role-icon.js";
 
 const PAGE_SIZE = 8;
 const FALLBACK_BASE_PRICE = "2";
@@ -130,7 +131,16 @@ export function LotsCard({ auctionId, lots, defaultBasePrice, disabled, onChange
                 {lots.map((l, i) => (
                   <tr key={l.id} className="border-b border-slate-800/50">
                     <td className="py-2 text-slate-500">{i + 1}</td>
-                    <td className="py-2 font-medium">{l.playerName}</td>
+                    <td className="py-2 font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        <CricketRoleIcon
+                          cricketRole={l.cricketRole}
+                          bowlingStyle={l.bowlingStyle}
+                          className="h-3.5 w-3.5"
+                        />
+                        {l.playerName}
+                      </span>
+                    </td>
                     <td className="py-2 text-slate-400">{l.basePrice}</td>
                     <td className="py-2 text-slate-400">{l.isOverseas ? "✓" : "—"}</td>
                     <td className="py-2 text-right">

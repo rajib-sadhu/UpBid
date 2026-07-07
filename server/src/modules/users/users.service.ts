@@ -24,6 +24,8 @@ export async function createUser(input: CreateUserInput): Promise<User> {
       role: input.role,
       status: "ACTIVE",
       passwordHash,
+      // The creator knows this password — the first login must replace it.
+      mustChangePassword: true,
       activatedAt: new Date(),
       createdById: input.createdById,
     },

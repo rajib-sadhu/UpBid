@@ -27,6 +27,7 @@ export function SeasonDetailPage() {
   const { seasonId = "" } = useParams();
   const [season, setSeason] = useState<Season | null>(null);
   const [auctions, setAuctions] = useState<Auction[]>([]);
+  const [leagueAuctions, setLeagueAuctions] = useState<Auction[]>([]);
   const [teamData, setTeamData] = useState<SeasonFranchisesData | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [savingTeams, setSavingTeams] = useState(false);
@@ -39,7 +40,7 @@ export function SeasonDetailPage() {
     formState: { errors, isSubmitting },
   } = useForm<CreateAuctionInput>({
     resolver: zodResolver(createAuctionSchema),
-    defaultValues: { name: "", biddingMode: "FRANCHISE" },
+    defaultValues: { name: "", biddingMode: "FRANCHISE", cloneFromAuctionId: "" },
   });
 
   const load = useCallback(async () => {
@@ -52,6 +53,9 @@ export function SeasonDetailPage() {
     setAuctions(au);
     setTeamData(tf);
     setSelected(new Set(tf.franchises.filter((f) => f.selected).map((f) => f.franchiseId)));
+    // Template picker: every auction across the league (any season) is a valid
+    // "copy settings from…" source.
+    setLeagueAuctions(await apiFetch<Auction[]>(`/api/leagues/${s.leagueId}/auctions`));
   }, [seasonId]);
 
   useEffect(() => {
@@ -106,7 +110,15 @@ export function SeasonDetailPage() {
             ← League
           </Link>
         )}
-        <h1 className="mt-1 text-2xl font-semibold">Season {season?.name ?? ""}</h1>
+        <div className="mt-1 flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-semibold">Season {season?.name ?? ""}</h1>
+          <Link
+            to={`/my/seasons/${seasonId}`}
+            className="text-sm text-indigo-400 hover:text-indigo-300"
+          >
+            Teams &amp; lineups →
+          </Link>
+        </div>
       </div>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
@@ -198,6 +210,24 @@ export function SeasonDetailPage() {
                 ))}
               </Select>
             </div>
+            {leagueAuctions.length > 0 && (
+              <div className="space-y-1">
+                <Label htmlFor="cloneFromAuctionId">Copy settings from</Label>
+                <Select id="cloneFromAuctionId" {...register("cloneFromAuctionId")}>
+                  <option value="">— blank auction —</option>
+                  {leagueAuctions.map((au) => (
+                    <option key={au.id} value={au.id}>
+                      {au.seasonName ? `${au.seasonName} · ` : ""}
+                      {au.name}
+                    </option>
+                  ))}
+                </Select>
+                <p className="text-xs text-slate-500">
+                  Copies the rules, bid increments, squad targets and lineup rules — not the
+                  player list.
+                </p>
+              </div>
+            )}
             <Button type="submit" className="w-full" disabled={isSubmitting}>
               {isSubmitting ? "Creating…" : "Create auction"}
             </Button>
@@ -222,7 +252,7 @@ export function SeasonDetailPage() {
                 <span
                   className={`rounded px-2 py-0.5 text-xs ${STATUS_STYLES[au.status] ?? "bg-slate-700 text-slate-300"}`}
                 >
-                  {au.status}
+                  {au.status === "RE_AUCTION" ? "UNSOLD AUCTION" : au.status}
                 </span>
               </Link>
             ))}

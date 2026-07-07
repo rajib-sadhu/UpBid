@@ -4,6 +4,8 @@ import type { AuctionMonitor, MonitorTeam } from "shared";
 import { apiFetch, ApiClientError } from "../../api/client.js";
 import { Card } from "../../components/ui/card.js";
 import { Button } from "../../components/ui/button.js";
+import { CricketRoleIcon } from "../../components/ui/role-icon.js";
+import { SignalBars } from "../../components/ui/signal-bars.js";
 import { StatusBadge, fmtCr, PlayerIcon } from "../auction-live/widgets.js";
 
 const LINEUP_STYLES: Record<string, string> = {
@@ -56,7 +58,15 @@ function ProgressBar({ data }: { data: AuctionMonitor["progress"] }) {
   );
 }
 
-function TeamCard({ team, canManage }: { team: MonitorTeam; canManage: boolean }) {
+function TeamCard({
+  team,
+  canManage,
+  presence,
+}: {
+  team: MonitorTeam;
+  canManage: boolean;
+  presence: Record<string, number | null> | undefined;
+}) {
   return (
     <Card className="p-4">
       <div className="mb-3 flex items-start justify-between gap-2">
@@ -72,7 +82,16 @@ function TeamCard({ team, canManage }: { team: MonitorTeam; canManage: boolean }
                 <span className="ml-1 text-xs text-slate-500">({team.shortName})</span>
               ) : null}
             </h3>
-            <p className="truncate text-xs text-slate-500">{team.ownerName ?? "No owner"}</p>
+            <p className="flex items-center gap-1.5 truncate text-xs text-slate-500">
+              {presence && team.ownerUserId && (
+                <SignalBars
+                  rttMs={presence[team.ownerUserId]}
+                  offline={!(team.ownerUserId in presence)}
+                  className="h-3 w-3"
+                />
+              )}
+              {team.ownerName ?? "No owner"}
+            </p>
           </div>
         </div>
         <LineupBadge status={team.lineupStatus} />
@@ -100,10 +119,17 @@ function TeamCard({ team, canManage }: { team: MonitorTeam; canManage: boolean }
             <li key={p.teamPlayerId} className="flex items-center gap-2">
               <PlayerIcon name={p.playerName} photoUrl={p.photoUrl} />
               <span className="min-w-0 flex-1 truncate">
+                {p.cricketRole ? (
+                  <CricketRoleIcon
+                    cricketRole={p.cricketRole}
+                    bowlingStyle={p.bowlingStyle}
+                    className="mr-1.5 inline h-3.5 w-3.5 align-[-2px]"
+                  />
+                ) : null}
                 {p.playerName}
                 {p.footballPosition ? (
                   <span className="ml-1 text-xs text-slate-500">{p.footballPosition}</span>
-                ) : p.role ? (
+                ) : !p.cricketRole && p.role ? (
                   <span className="ml-1 text-xs text-slate-500">{p.role}</span>
                 ) : null}
                 {p.isOverseas ? <span className="ml-1 text-xs text-indigo-400">✈</span> : null}
@@ -206,7 +232,7 @@ export function AuctionMonitorPage() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {data.teams.map((t) => (
-              <TeamCard key={t.id} team={t} canManage={data.canManage} />
+              <TeamCard key={t.id} team={t} canManage={data.canManage} presence={data.presence} />
             ))}
           </div>
         )}

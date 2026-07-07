@@ -7,8 +7,8 @@ import type {
   BidIncrementTier,
 } from "@prisma/client";
 import type { SnapshotTeam, TeamTally, CurrentLot, LiveLot, LotCounts } from "shared";
-import { moneyToWire } from "../lib/money.js";
-import { maxBid, requiredNextBid, type IncrementTier } from "../services/reserve.js";
+import { moneyToWire, type Money } from "../lib/money.js";
+import { maxBid, requiredNextBid, openingPrice, type IncrementTier } from "../services/reserve.js";
 import type { TimerInfo } from "./timer.js";
 
 export type LotWithPlayer = AuctionPlayer & { player: Player };
@@ -66,6 +66,7 @@ export function toCurrentLot(
   lot: LotWithPlayer,
   tiers: IncrementTier[],
   info: TimerInfo,
+  unsoldPrice: Money,
 ): CurrentLot {
   return {
     auctionPlayerId: lot.id,
@@ -87,7 +88,13 @@ export function toCurrentLot(
     round: lot.round,
     currentPrice: lot.currentPrice ? moneyToWire(lot.currentPrice) : null,
     leadingTeamId: lot.leadingTeamId,
-    requiredNextBid: moneyToWire(requiredNextBid(lot.currentPrice ?? null, lot.basePrice, tiers)),
+    requiredNextBid: moneyToWire(
+      requiredNextBid(
+        lot.currentPrice ?? null,
+        openingPrice(lot.round, lot.basePrice, unsoldPrice),
+        tiers,
+      ),
+    ),
     version: lot.version,
     timerState: info.state,
     endsAt: info.endsAt ? info.endsAt.toISOString() : null,

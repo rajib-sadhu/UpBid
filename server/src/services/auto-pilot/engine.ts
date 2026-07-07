@@ -3,11 +3,11 @@ import { SERVER_EVENTS, type SquadRoleKey, type TeamSquadReport } from "shared";
 import type { AuthUser } from "../../auth/types.js";
 import { prisma } from "../../lib/prisma.js";
 import { Errors } from "../../lib/errors.js";
-import { ZERO } from "../../lib/money.js";
+import { money, mul, sub, maxMoney, ZERO, type Money } from "../../lib/money.js";
 import { emitToRoom, nextSeq } from "../../realtime/broadcast.js";
 import { buildStateSnapshot } from "../../realtime/snapshot.js";
 import { toIncrementTiers } from "../../realtime/mappers.js";
-import type { IncrementTier } from "../reserve.js";
+import { openingPrice, type IncrementTier } from "../reserve.js";
 import * as timer from "../../realtime/timer.js";
 import { openLot } from "../lot.js";
 import { finalizeLot } from "../finalize.js";
@@ -21,11 +21,12 @@ import {
   playerRoles,
   roleReport,
   reserveSlotCount,
+  roleCapExceeded,
   ROLE_COUNT,
   type CricketAttrs,
   type SquadTargets,
 } from "./roles.js";
-import { valuePlayer, jitterFor } from "./valuation.js";
+import { valuePlayer, jitterFor, qualityFor, personalityFor } from "./valuation.js";
 import { chooseNextBidder, type BotCandidate, type BotRules } from "./bot.js";
 
 // ===========================================================================
@@ -40,14 +41,20 @@ import { chooseNextBidder, type BotCandidate, type BotRules } from "./bot.js";
 // rather than waiting for the freeze.
 // ===========================================================================
 
+// Human-like pacing (ms). Bid delays vary per bid; the hammer lingers longer on
+// an expensive lot. Random here is safe — pacing never touches auction state.
 const PACE = {
-  open: 800, // after a lot goes on the block
-  bid: 600, // between bot bids
-  finalize: 800, // before selling / marking unsold
-  lot: 1100, // between lots
-  phase: 1500, // between phases
+  open: 1500, // after a lot goes on the block
+  bidMin: 900, // fastest a rival bid comes back…
+  bidMax: 2200, // …and the slowest (uniform in between)
+  hammer: 2200, // "going once, going twice" before selling
+  hammerBig: 1500, // extra linger when the lot got expensive (>4× base)
+  unsold: 1800, // the silence before an unwanted lot is declared unsold
+  lot: 1800, // between lots
+  phase: 2000, // between phases
   assign: 500, // between force-assignments
 };
+const bidDelay = (): number => PACE.bidMin + Math.random() * (PACE.bidMax - PACE.bidMin);
 const LOT_WINDOW_MS = 30_000; // rolling timer window, bumped each bid
 const SCARCITY_CAP = 4;
 const ZERO_TARGETS: SquadTargets = {
@@ -63,6 +70,10 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 /** Auctions with a live engine loop — guards against a double-start. */
 const running = new Set<string>();
+
+/** Auctions stopped by AUTO_STOP mid-run — finishRun emits AUTO_STOPPED (no
+ * report) instead of AUTO_FINISHED, and the open lot is left frozen in place. */
+const manualStops = new Set<string>();
 
 type LotWithPlayer = AuctionPlayer & { player: Player };
 
@@ -152,6 +163,7 @@ async function buildCandidates(ctx: EngineContext, lot: LotWithPlayer): Promise<
   const teams = await prisma.team.findMany({
     where: { auctionId: lot.auctionId },
     include: { players: { include: { player: true } } },
+    orderBy: { createdAt: "asc" }, // stable order → stable personalities
   });
 
   const totalDemand: Record<SquadRoleKey, number> = {
@@ -162,7 +174,7 @@ async function buildCandidates(ctx: EngineContext, lot: LotWithPlayer): Promise<
     SPINNER: 0,
     ALL_ROUNDER: 0,
   };
-  const perTeam = teams.map((t) => {
+  const perTeam = teams.map((t, teamIndex) => {
     const counts = squadCounts(t.players.map((tp) => attrsOf(tp.player)));
     const needs = roleNeeds(counts, ctx.targets);
     totalDemand.WICKETKEEPER += needs.wicketkeepers;
@@ -171,23 +183,29 @@ async function buildCandidates(ctx: EngineContext, lot: LotWithPlayer): Promise<
     totalDemand.PACE_BOWLER += needs.paceBowlers;
     totalDemand.SPINNER += needs.spinners;
     totalDemand.ALL_ROUNDER += needs.allRounders;
-    return { team: t, needs };
+    return { team: t, needs, counts, teamIndex };
   });
 
   const scarcity = await scarcityMap(lot.auctionId, totalDemand);
   const attrs = attrsOf(lot.player);
   const playerRoleKeys = playerRoles(attrs);
 
-  return perTeam.map(({ team, needs }): BotCandidate => {
+  const opening = openingPrice(lot.round, lot.basePrice, ctx.rules.unsoldPrice);
+
+  return perTeam.map(({ team, needs, counts, teamIndex }): BotCandidate => {
     const ns = needScore(attrs, needs);
     const slotsRemaining = ctx.rules.maxPlayersPerTeam - team.playerCount;
 
     // Slot discipline: a depth player (fills no unmet need) is only worth bidding
     // on when there is a slot to spare AFTER reserving one for each unmet role
-    // need. Otherwise valuation 0 → the bot passes, the lot can go unsold, and the
-    // reserved slots stay open for required roles (or the assignment fill).
+    // need. The soft role cap additionally stops a team stacking one role
+    // (target + 2) while another is still short. Valuation 0 → the bot passes.
+    const depthAllowed =
+      slotsRemaining > reserveSlotCount(needs) &&
+      !(needs.total > 0 && roleCapExceeded(attrs, counts, ctx.targets));
+
     let valuation = ZERO;
-    if (ns > 0 || slotsRemaining > reserveSlotCount(needs)) {
+    if (slotsRemaining > 0 && (ns > 0 || depthAllowed)) {
       // Scarcity = the keenest among the roles this player fills that the team needs.
       let sc = 1;
       if (ns > 0) {
@@ -195,11 +213,18 @@ async function buildCandidates(ctx: EngineContext, lot: LotWithPlayer): Promise<
           if (needs[ROLE_COUNT[role]] > 0) sc = Math.max(sc, scarcity[role]);
         }
       }
+      // Par price — the budget anchor: remaining credit spread over the
+      // remaining slots. This is what makes teams actually spend their purse.
+      const remaining = sub(ctx.rules.creditPerTeam, team.committedAmount);
+      const par: Money = maxMoney(opening, money(remaining.dividedBy(slotsRemaining)));
       valuation = valuePlayer({
-        basePrice: lot.basePrice,
+        openingPrice: opening,
+        parPrice: par,
         slotsRemaining,
         needScore: ns,
         scarcity: sc,
+        quality: qualityFor(lot.playerId),
+        personality: personalityFor(teamIndex),
         jitter: jitterFor(team.id, lot.playerId),
       });
     }
@@ -239,6 +264,7 @@ async function playLot(ctx: EngineContext, lot: LotWithPlayer, justOpened: boole
   if (justOpened) await sleep(PACE.open);
 
   const candidates = await buildCandidates(ctx, lot);
+  const opening = openingPrice(lot.round, lot.basePrice, ctx.rules.unsoldPrice);
   let anyBid = false;
 
   for (;;) {
@@ -252,7 +278,7 @@ async function playLot(ctx: EngineContext, lot: LotWithPlayer, justOpened: boole
 
     const withLeader = candidates.map((c) => ({ ...c, isLeader: c.teamId === live.leadingTeamId }));
     const decision = chooseNextBidder(
-      { currentPrice: live.currentPrice, basePrice: lot.basePrice },
+      { currentPrice: live.currentPrice, basePrice: opening },
       withLeader,
       ctx.rules,
       ctx.tiers,
@@ -272,11 +298,26 @@ async function playLot(ctx: EngineContext, lot: LotWithPlayer, justOpened: boole
     } catch {
       // Lost a CAS race / transient rejection — re-read and continue.
     }
-    await sleep(PACE.bid);
+    await sleep(bidDelay());
   }
 
-  // Linger only on a contested lot; a no-interest lot goes unsold promptly.
-  if (anyBid) await sleep(PACE.finalize);
+  // The hammer: linger on a contested lot ("going once, going twice"), longer
+  // when it got expensive; a no-interest lot sits in silence, then goes unsold.
+  if (anyBid) {
+    const priced = await prisma.auctionPlayer.findUnique({
+      where: { id: lot.id },
+      select: { currentPrice: true },
+    });
+    const big = priced?.currentPrice?.greaterThan(mul(opening, 4)) ?? false;
+    await sleep(PACE.hammer + (big ? PACE.hammerBig : 0));
+  } else {
+    await sleep(PACE.unsold);
+  }
+
+  // Re-check AFTER the pause: an AUTO_STOP during the hammer must freeze the
+  // lot as-is (leader and price intact), never finalize it.
+  const still = await stillRunning(auctionId);
+  if (!still.go || still.lotId !== lot.id) return;
   const finalLot = await prisma.auctionPlayer.findUnique({
     where: { id: lot.id },
     select: { leadingTeamId: true, status: true },
@@ -290,13 +331,55 @@ async function playLot(ctx: EngineContext, lot: LotWithPlayer, justOpened: boole
   }
 }
 
-/** The next PENDING lot in the active round, by lot order. */
+/** Role sections the auto auction rotates through (cricket only). */
+const SECTION_ORDER = ["BATSMAN", "WICKETKEEPER", "PACE", "SPIN", "ALL_ROUNDER"] as const;
+type Section = (typeof SECTION_ORDER)[number];
+
+function sectionOf(p: CricketAttrs): Section | null {
+  switch (p.cricketRole) {
+    case "BATSMAN":
+      return "BATSMAN";
+    case "WICKETKEEPER":
+      return "WICKETKEEPER";
+    case "BOWLER":
+      return p.bowlingStyle === "SPINNER" ? "SPIN" : "PACE";
+    case "ALL_ROUNDER":
+      return "ALL_ROUNDER";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The next PENDING lot. Cricket pools rotate role sections (batsman → WK →
+ * pace → spin → all-rounder → …) so the auction mixes roles instead of
+ * draining one section at a time; the rotation position derives from how many
+ * lots have already been finalized, so it is deterministic and resume-safe.
+ * Non-cricket players keep plain lot order.
+ */
 async function nextPendingLot(auctionId: string): Promise<LotWithPlayer | null> {
-  return prisma.auctionPlayer.findFirst({
+  const pending = await prisma.auctionPlayer.findMany({
     where: { auctionId, status: "PENDING" },
     orderBy: [{ lotOrder: "asc" }, { createdAt: "asc" }],
     include: { player: true },
   });
+  if (pending.length === 0) return null;
+
+  const bySection = new Map<Section, LotWithPlayer>();
+  for (const lot of pending) {
+    const s = sectionOf(attrsOf(lot.player));
+    if (s && !bySection.has(s)) bySection.set(s, lot); // first = best lot order
+  }
+  if (bySection.size === 0) return pending[0]!; // non-cricket pool
+
+  const finalized = await prisma.auctionPlayer.count({
+    where: { auctionId, status: { in: ["SOLD", "UNSOLD", "ASSIGNED"] } },
+  });
+  for (let k = 0; k < SECTION_ORDER.length; k++) {
+    const lot = bySection.get(SECTION_ORDER[(finalized + k) % SECTION_ORDER.length]!);
+    if (lot) return lot;
+  }
+  return pending[0]!;
 }
 
 async function advanceAndBroadcast(
@@ -407,6 +490,14 @@ async function buildReport(
 
 /** Clear the flag, emit the report, and re-snapshot (lifts the view-only lock). */
 async function finishRun(auctionId: string, ctx: EngineContext): Promise<void> {
+  if (manualStops.delete(auctionId)) {
+    // Organizer pressed Stop Auto: the auction stays live under manual control
+    // (possibly with the current lot still on the block) — no report, no
+    // "finished" banner; just confirm the stop and lift the view-only lock.
+    emitToRoom(auctionId, SERVER_EVENTS.AUTO_STOPPED, { seq: nextSeq(auctionId) });
+    emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
+    return;
+  }
   const a = await prisma.auction.findUnique({
     where: { id: auctionId },
     select: { autoPilot: true, status: true, round: true },
@@ -511,18 +602,38 @@ async function launch(auctionId: string): Promise<void> {
 export async function startAutoPilot(auctionId: string): Promise<void> {
   const auction = await prisma.auction.findUnique({
     where: { id: auctionId },
-    select: { status: true, currentAuctionPlayerId: true },
+    select: { status: true },
   });
   if (!auction) throw Errors.notFound("Auction not found");
   if (auction.status !== "LIVE" && auction.status !== "RE_AUCTION") {
     throw Errors.invalidState("Auto-pilot can only start from a live round");
   }
-  if (auction.currentAuctionPlayerId) {
-    throw Errors.invalidState("Finalize the current lot before starting auto-pilot");
-  }
   if (running.has(auctionId)) return;
+  // A lot already on the block (manual, or frozen by a previous AUTO_STOP) is
+  // fine: the loop's resume path picks it up and the bots continue bidding.
+  manualStops.delete(auctionId);
   await prisma.auction.update({ where: { id: auctionId }, data: { autoPilot: true } });
   void launch(auctionId);
+}
+
+/**
+ * Organizer stop (the freeze): clear the flag so the loop halts before its next
+ * action — the lot on the block keeps its price and leader, the auction stays
+ * LIVE and manual controls unlock at once. AUTO_START resumes later, mid-lot ok.
+ */
+export async function stopAutoPilot(auctionId: string): Promise<void> {
+  const auction = await prisma.auction.findUnique({
+    where: { id: auctionId },
+    select: { autoPilot: true },
+  });
+  if (!auction) throw Errors.notFound("Auction not found");
+  if (!auction.autoPilot) throw Errors.invalidState("Auto-pilot is not running");
+  if (running.has(auctionId)) manualStops.add(auctionId);
+  await prisma.auction.update({ where: { id: auctionId }, data: { autoPilot: false } });
+  if (!running.has(auctionId)) {
+    // No live loop in this process (e.g. it already exited) — confirm directly.
+    emitToRoom(auctionId, SERVER_EVENTS.AUTO_STOPPED, { seq: nextSeq(auctionId) });
+  }
 }
 
 /** On boot, resume any auction left mid-auto-run by a previous process. */

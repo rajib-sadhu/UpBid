@@ -23,17 +23,114 @@ import {
 } from "./auctions.mapper.js";
 import { toFormation } from "./lots.mapper.js";
 import * as timer from "../../realtime/timer.js";
+import { SERVER_EVENTS } from "shared";
+import { suspendSeasonRivals } from "../../services/phase.js";
+import { emitToRoom } from "../../realtime/broadcast.js";
+import { buildStateSnapshot } from "../../realtime/snapshot.js";
 
-// POST /api/seasons/:seasonId/auctions
+// POST /api/seasons/:seasonId/auctions — optionally cloning the settings
+// (rules, increment tiers, squad targets, lineup rules, formations — never the
+// lot list) of another auction from the same league.
 export async function createAuction(req: Request, res: Response): Promise<void> {
   const seasonId = req.params.seasonId;
   if (!seasonId) throw Errors.notFound();
   const body = req.body as CreateAuctionInput;
-  const auction = await prisma.auction.create({
-    data: { name: body.name, biddingMode: body.biddingMode, seasonId },
-    include: { _count: { select: { teams: true, auctionPlayers: true } } },
+
+  let source: Prisma.AuctionGetPayload<{
+    include: {
+      rules: true;
+      incrementTiers: true;
+      cricketSquadTargets: true;
+      lineupRules: true;
+      allowedFormations: true;
+      season: { select: { leagueId: true } };
+    };
+  }> | null = null;
+  if (body.cloneFromAuctionId) {
+    const [season, src] = await Promise.all([
+      prisma.season.findUnique({ where: { id: seasonId }, select: { leagueId: true } }),
+      prisma.auction.findUnique({
+        where: { id: body.cloneFromAuctionId },
+        include: {
+          rules: true,
+          incrementTiers: true,
+          cricketSquadTargets: true,
+          lineupRules: true,
+          allowedFormations: true,
+          season: { select: { leagueId: true } },
+        },
+      }),
+    ]);
+    if (!season) throw Errors.notFound();
+    if (!src || src.season.leagueId !== season.leagueId) {
+      throw Errors.validation("The template auction must belong to the same league");
+    }
+    source = src;
+  }
+
+  const auction = await prisma.$transaction(async (tx) => {
+    const created = await tx.auction.create({
+      data: { name: body.name, biddingMode: body.biddingMode, seasonId },
+      include: { _count: { select: { teams: true, auctionPlayers: true } } },
+    });
+    if (!source) return created;
+    if (source.rules) {
+      await tx.auctionRules.create({
+        data: {
+          auctionId: created.id,
+          creditPerTeam: source.rules.creditPerTeam,
+          minPlayersPerTeam: source.rules.minPlayersPerTeam,
+          maxPlayersPerTeam: source.rules.maxPlayersPerTeam,
+          unsoldPrice: source.rules.unsoldPrice,
+          defaultBasePrice: source.rules.defaultBasePrice,
+          defaultLotDurationSec: source.rules.defaultLotDurationSec,
+        },
+      });
+    }
+    if (source.incrementTiers.length > 0) {
+      await tx.bidIncrementTier.createMany({
+        data: source.incrementTiers.map((t) => ({
+          auctionId: created.id,
+          fromAmount: t.fromAmount,
+          increment: t.increment,
+        })),
+      });
+    }
+    if (source.cricketSquadTargets) {
+      const { id: _i, auctionId: _a, ...targets } = source.cricketSquadTargets;
+      await tx.cricketSquadTargets.create({ data: { auctionId: created.id, ...targets } });
+    }
+    if (source.lineupRules) {
+      const { id: _i, auctionId: _a, ...lineup } = source.lineupRules;
+      await tx.lineupRules.create({ data: { auctionId: created.id, ...lineup } });
+    }
+    if (source.allowedFormations.length > 0) {
+      await tx.auctionAllowedFormation.createMany({
+        data: source.allowedFormations.map((f) => ({
+          auctionId: created.id,
+          formationId: f.formationId,
+        })),
+      });
+    }
+    return created;
   });
   res.status(201).json(toAuction(auction));
+}
+
+// GET /api/leagues/:leagueId/auctions — every auction across the league's
+// seasons (newest first); powers the "copy settings from…" template picker.
+export async function listLeagueAuctions(req: Request, res: Response): Promise<void> {
+  const leagueId = req.params.leagueId;
+  if (!leagueId) throw Errors.notFound();
+  const auctions = await prisma.auction.findMany({
+    where: { season: { leagueId } },
+    orderBy: { createdAt: "desc" },
+    include: {
+      season: { select: { name: true, league: { select: { name: true, sport: true } } } },
+      _count: { select: { teams: true, auctionPlayers: true } },
+    },
+  });
+  res.json(auctions.map(toAuction));
 }
 
 // GET /api/auctions/mine — auctions the caller participates in (franchise owns a
@@ -153,6 +250,7 @@ export async function putRules(req: Request, res: Response): Promise<void> {
     minPlayersPerTeam: b.minPlayersPerTeam,
     maxPlayersPerTeam: b.maxPlayersPerTeam,
     unsoldPrice: money(b.unsoldPrice),
+    defaultBasePrice: money(b.defaultBasePrice),
     defaultLotDurationSec: b.defaultLotDurationSec,
   };
   const rules = await prisma.auctionRules.upsert({
@@ -335,6 +433,10 @@ export async function goLive(req: Request, res: Response): Promise<void> {
   const have = new Set(existingTeams.map((t) => t.franchiseId));
   const toCreate = seasonFranchises.filter((sf) => !have.has(sf.franchiseId));
 
+  // One live auction per season: force-suspend any other running auction of
+  // this season before this one takes the stage.
+  const suspended = await suspendSeasonRivals(auction.seasonId, id);
+
   const a = await prisma.$transaction(async (tx) => {
     if (toCreate.length) {
       await tx.team.createMany({
@@ -352,5 +454,10 @@ export async function goLive(req: Request, res: Response): Promise<void> {
       include: { _count: { select: { teams: true, auctionPlayers: true } } },
     });
   });
+
+  // Tell anyone watching a force-suspended auction what just happened.
+  for (const rivalId of suspended) {
+    emitToRoom(rivalId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(rivalId));
+  }
   res.json(toAuction(a));
 }

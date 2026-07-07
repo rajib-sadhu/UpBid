@@ -18,6 +18,10 @@ export const LOT_STATUSES = ["PENDING", "ON_BLOCK", "SOLD", "UNSOLD", "ASSIGNED"
 export const createAuctionSchema = z.object({
     name: z.string().trim().min(1, "Name is required").max(120),
     biddingMode: z.enum(BIDDING_MODES).default("FRANCHISE"),
+    // Optional template: copy settings (rules, increment tiers, squad targets,
+    // lineup rules, formations) from another auction of the SAME league. The lot
+    // list is never copied. Empty string = no template (HTML select convenience).
+    cloneFromAuctionId: z.string().trim().optional(),
 });
 export const updateAuctionSchema = z.object({
     name: z.string().trim().min(1, "Name is required").max(120),

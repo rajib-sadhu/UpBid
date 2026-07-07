@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Sport, FootballPosition } from "./sports.js";
 import type { LotStatus, AuctionRound } from "./auctions.js";
+import type { CricketRole, BowlingStyle } from "./players.js";
 export declare const addLotsSchema: z.ZodObject<{
     lots: z.ZodArray<z.ZodObject<{
         playerId: z.ZodString;
@@ -58,6 +59,8 @@ export interface Lot {
     playerName: string;
     sport: Sport;
     footballPosition: FootballPosition | null;
+    cricketRole: CricketRole | null;
+    bowlingStyle: BowlingStyle | null;
     basePrice: string;
     isOverseas: boolean;
     status: LotStatus;

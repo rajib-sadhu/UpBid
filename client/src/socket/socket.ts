@@ -12,6 +12,11 @@ export function getSocket(): Socket {
       autoConnect: false,
       auth: (cb) => cb({ token: getToken() ?? "" }),
     });
+    // Connection-quality probe: ack immediately so the server can measure the
+    // round trip. Registered once here — a second ack call would be ignored.
+    socket.on("PRESENCE_PING", (ack: unknown) => {
+      if (typeof ack === "function") (ack as () => void)();
+    });
   }
   return socket;
 }

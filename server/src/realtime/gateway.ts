@@ -8,7 +8,9 @@ import {
   timerAddSchema,
   phaseAdvanceSchema,
   assignPlayerSchema,
+  assignSkipSchema,
   autoStartSchema,
+  autoStopSchema,
 } from "shared";
 import type { ZodSchema } from "zod";
 import type { AuthUser } from "../auth/types.js";
@@ -23,15 +25,21 @@ import {
   nextSeq,
   currentSeq,
 } from "./broadcast.js";
-import { canViewAuction, requireOrganizer, requireManualControl } from "./authz.js";
+import { canViewAuction, requireOrganizer, requireManualControl, auctionOwnerId } from "./authz.js";
 import { buildStateSnapshot } from "./snapshot.js";
 import * as timer from "./timer.js";
+import {
+  trackPresence,
+  untrackPresence,
+  untrackEverywhere,
+  startPresenceLoop,
+} from "./presence.js";
 import { placeBid, undoLastBid, resetCurrentLotBids } from "../services/bid-pipeline.js";
 import { openLot } from "../services/lot.js";
 import { finalizeLot, reverseLastSale, rebidLot } from "../services/finalize.js";
-import { assignPlayer } from "../services/assignment.js";
+import { assignPlayer, assignmentState, toggleAssignSkip } from "../services/assignment.js";
 import { advancePhase, suspendAuction, resumeAuction, cancelAuction } from "../services/phase.js";
-import { startAutoPilot, resumeAutoPilots } from "../services/auto-pilot/engine.js";
+import { startAutoPilot, stopAutoPilot, resumeAutoPilots } from "../services/auto-pilot/engine.js";
 
 // Bid-pipeline outcomes that are normal race results → BID_REJECTED (to the one
 // bidder), not protocol faults. Everything else (FORBIDDEN, NOT_FOUND, …) → ERROR.
@@ -97,6 +105,7 @@ function on<T>(
 export function initGateway(io: Server): void {
   initBroadcast(io);
   timer.startSweep();
+  startPresenceLoop();
 
   // Re-arm / freeze any in-flight lots left by a previous process.
   void recoverActiveTimers().catch((e) => console.error("[realtime] timer recovery failed:", e));
@@ -129,12 +138,21 @@ export function initGateway(io: Server): void {
         throw new AppError("FORBIDDEN", "You cannot view this auction", 403);
       }
       await socket.join(roomName(auctionId));
+      // Connection-quality tracking: everyone is measured; only the auction's
+      // organizer (or an admin) receives the per-user reports.
+      const observer =
+        user.role === "SUPER_ADMIN" ||
+        (user.role === "ORGANIZER" && (await auctionOwnerId(auctionId)) === user.id);
+      trackPresence(auctionId, socket, user.id, observer);
       emitToSocket(socket, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
     });
 
     on(socket, CLIENT_EVENTS.AUCTION_LEAVE, auctionIdSchema, async ({ auctionId }) => {
       await socket.leave(roomName(auctionId));
+      untrackPresence(auctionId, socket);
     });
+
+    socket.on("disconnect", () => untrackEverywhere(socket));
 
     // ---- Bidding ----------------------------------------------------------
     socket.on(CLIENT_EVENTS.BID_PLACE, (raw: unknown) => {
@@ -321,10 +339,38 @@ export function initGateway(io: Server): void {
       });
     });
 
+    on(socket, CLIENT_EVENTS.ASSIGN_SKIP, assignSkipSchema, async ({ auctionId, teamId }) => {
+      await requireOrganizer(user, auctionId);
+      const a = await prisma.auction.findUnique({
+        where: { id: auctionId },
+        select: { status: true },
+      });
+      if (a?.status !== "ASSIGNMENT") {
+        throw new AppError(
+          "INVALID_STATE",
+          "Turns can only be skipped during the assignment phase",
+          409,
+        );
+      }
+      toggleAssignSkip(auctionId, teamId);
+      emitToRoom(auctionId, SERVER_EVENTS.ASSIGN_TURN, {
+        seq: nextSeq(auctionId),
+        assignment: await assignmentState(auctionId),
+      });
+    });
+
     // ---- Auto-pilot (organizer hands the auction to the bot engine) -------
     on(socket, CLIENT_EVENTS.AUTO_START, autoStartSchema, async ({ auctionId }) => {
       await requireOrganizer(user, auctionId);
       await startAutoPilot(auctionId);
+      emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
+    });
+
+    // Stop = freeze: bots halt where they are (an open lot keeps its price and
+    // leader), the auction stays LIVE and manual control returns immediately.
+    on(socket, CLIENT_EVENTS.AUTO_STOP, autoStopSchema, async ({ auctionId }) => {
+      await requireOrganizer(user, auctionId);
+      await stopAutoPilot(auctionId);
       emitToRoom(auctionId, SERVER_EVENTS.STATE_SNAPSHOT, await buildStateSnapshot(auctionId));
     });
   });

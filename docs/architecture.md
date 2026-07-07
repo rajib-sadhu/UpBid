@@ -1,10 +1,17 @@
-# Architecture — Real-time auction engine (Phase 5 source of truth)
+# Architecture — Real-time auction engine (source of truth)
 
 > Companion to `build-plan.md` (§6–7) and `schema.prisma`. This document is the
 > authoritative spec for the Socket.io layer, the server-authoritative bid
 > pipeline, the credit-reserve math, the lot timer, and the auction state
 > machine. Phase 5/6 code derives from this file. Where this file restates a
 > build-plan invariant, the build plan wins on conflict — flag any discrepancy.
+>
+> **Last updated 2026-07-04** — reflects the post-launch improvements: organizer
+> corrections (undo/reset/reverse/re-bid), whole-auction lifecycle
+> (suspend/resume/cancel, one live auction per season), the chainable **unsold
+> auction** (`RE_AUCTION` sweep), the assignment **pick rotation**, the
+> **auto-pilot** bot engine, **connection presence** bars, and the forced
+> password change for provisioned accounts.
 
 ---
 
@@ -53,6 +60,16 @@
 - No token refresh over the socket. On JWT expiry the client reconnects with a
   fresh token (obtained via the existing REST auth flow).
 
+### Forced password change (REST, gates everything)
+
+Every provisioned account (admin→organizer, organizer→franchise) is created with
+`User.mustChangePassword = true`; a creator **reset**
+(`POST /api/users/:id/reset-password`) sets it again. While the flag is set the
+client renders only the full-screen change form; `POST /api/auth/change-password`
+verifies the current password, requires a different new one, clears the flag and
+returns a fresh token. Existing pre-flag accounts were backfilled by migration
+(`20260704090251`); the seed `SUPER_ADMIN` is exempt (credentials live in `.env`).
+
 ### Join authorization (`AUCTION_JOIN`)
 
 On `AUCTION_JOIN { auctionId }` the server verifies **view** entitlement:
@@ -72,9 +89,14 @@ Spectator access is **not** in v1 (no public/anonymous viewers); revisit later.
 Every state-changing event re-checks role + ownership **server-side**, every
 time — never relying on the join check alone:
 
-- **Organizer-only control events** (lot control, timer, phase, force-assign):
-  caller must be the auction owner (or `SUPER_ADMIN`).
+- **Organizer-only control events** (lot control, corrections, timer, phase,
+  force-assign, skip-turn, auto-pilot, suspend/resume/cancel): caller must be
+  the auction owner (or `SUPER_ADMIN`).
+- **Manual-control events** are additionally rejected while auto-pilot is
+  driving (`requireManualControl`) — suspend/cancel stay available as the
+  kill-switch.
 - **`BID_PLACE`** depends on `biddingMode` (§8).
+- **`ASSIGN_PLAYER`** as a franchise is also gated on the pick rotation (§9).
 
 ---
 
@@ -98,9 +120,11 @@ time — never relying on the join check alone:
   "auction": {
     "id": "...",
     "name": "...",
-    "status": "LIVE",
-    "round": "MAIN",
+    "status": "LIVE", // see the state machine (§9); SUSPENDED/CANCELLED included
+    "round": "MAIN", // MAIN | RE_AUCTION | ASSIGNMENT
     "biddingMode": "FRANCHISE",
+    "sport": "CRICKET",
+    "autoPilot": false, // true while the bot engine drives (UI is view-only)
   },
   "rules": {
     "creditPerTeam": "100.0000",
@@ -144,9 +168,14 @@ time — never relying on the join check alone:
     "remainingMs": null, // set only when PAUSED
   },
   "lots": {
-    // lightweight roster of all lots for the board
+    // roster of ALL lots for the board/queue/assignment list. Each item carries
+    // player identity + cricketRole/bowlingStyle (for role-section grouping),
+    // status, round, soldPrice, soldToTeamId.
     "counts": { "PENDING": 40, "ON_BLOCK": 1, "SOLD": 12, "UNSOLD": 3, "ASSIGNED": 0 },
+    "items": [/* LiveLot[] */],
   },
+  // Pick rotation — non-null only while status = ASSIGNMENT (§9).
+  "assignment": { "pickQueue": ["teamId…"], "skipped": ["teamId…"] },
   "serverTime": "2026-06-26T12:00:05.000Z", // for client clock-skew correction
 }
 ```
@@ -175,19 +204,29 @@ idempotency where noted. Every server→client broadcast carries `seq`.
 
 ### Client → server
 
-| Event             | Payload                                                                | Auth                                         | Effect                                                                     |
-| ----------------- | ---------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- |
-| `AUCTION_JOIN`    | `{ auctionId }`                                                        | view                                         | join room, receive `STATE_SNAPSHOT`                                        |
-| `AUCTION_LEAVE`   | `{ auctionId }`                                                        | —                                            | leave room                                                                 |
-| `BID_PLACE`       | `{ auctionId, auctionPlayerId, teamId, amount, version, clientBidId }` | bid (§8)                                     | run bid pipeline (§6)                                                      |
-| `LOT_OPEN`        | `{ auctionId, auctionPlayerId }`                                       | organizer                                    | put a `PENDING` lot `ON_BLOCK`, start timer                                |
-| `LOT_SELL`        | `{ auctionId, auctionPlayerId }`                                       | organizer                                    | finalize SOLD to current leader (`NO_LEADER` if none)                      |
-| `LOT_MARK_UNSOLD` | `{ auctionId, auctionPlayerId }`                                       | organizer                                    | finalize UNSOLD                                                            |
-| `TIMER_ADD`       | `{ auctionId, seconds }`                                               | organizer                                    | (re)start the lot clock; reopens a `FROZEN` lot                            |
-| `TIMER_PAUSE`     | `{ auctionId }`                                                        | organizer                                    | freeze the active lot timer (PAUSED)                                       |
-| `TIMER_RESUME`    | `{ auctionId }`                                                        | organizer                                    | resume with stored remaining time                                          |
-| `PHASE_ADVANCE`   | `{ auctionId, to }`                                                    | organizer                                    | state-machine transition (§9)                                              |
-| `ASSIGN_PLAYER`   | `{ auctionId, auctionPlayerId, teamId }`                               | organizer (force) / franchise owner (choose) | ASSIGNMENT phase: assign a remaining player at `unsoldPrice` (§9, Phase 6) |
+| Event             | Payload                                                                | Auth                                         | Effect                                                                                           |
+| ----------------- | ---------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `AUCTION_JOIN`    | `{ auctionId }`                                                        | view                                         | join room, receive `STATE_SNAPSHOT`; presence tracking starts (§14)                              |
+| `AUCTION_LEAVE`   | `{ auctionId }`                                                        | —                                            | leave room, presence tracking stops                                                              |
+| `BID_PLACE`       | `{ auctionId, auctionPlayerId, teamId, amount, version, clientBidId }` | bid (§8)                                     | run bid pipeline (§6)                                                                            |
+| `BID_UNDO`        | `{ auctionId }`                                                        | organizer                                    | correction: delete the newest bid on the open lot, roll price/leader back; fresh snapshot        |
+| `BID_RESET`       | `{ auctionId }`                                                        | organizer                                    | correction: wipe ALL bids on the open lot back to no-bid state; fresh snapshot                   |
+| `LOT_OPEN`        | `{ auctionId, auctionPlayerId }`                                       | organizer                                    | put a `PENDING` lot `ON_BLOCK` (opens at `openingPrice`, §9), start timer                        |
+| `LOT_SELL`        | `{ auctionId, auctionPlayerId }`                                       | organizer                                    | finalize SOLD to current leader (`NO_LEADER` if none)                                            |
+| `LOT_MARK_UNSOLD` | `{ auctionId, auctionPlayerId }`                                       | organizer                                    | finalize UNSOLD                                                                                  |
+| `SALE_REVERSE`    | `{ auctionId }`                                                        | organizer                                    | correction: undo the LAST sale — lot back ON_BLOCK in pre-sell state, tallies rolled back        |
+| `LOT_REBID`       | `{ auctionId, auctionPlayerId }`                                       | organizer                                    | correction: re-auction a finished (SOLD/UNSOLD) lot fresh — bids wiped, base price, new timer    |
+| `TIMER_ADD`       | `{ auctionId, seconds }`                                               | organizer                                    | (re)start the lot clock; reopens a `FROZEN` lot                                                  |
+| `TIMER_PAUSE`     | `{ auctionId }`                                                        | organizer                                    | freeze the active lot timer (PAUSED)                                                             |
+| `TIMER_RESUME`    | `{ auctionId }`                                                        | organizer                                    | resume with stored remaining time                                                                |
+| `PHASE_ADVANCE`   | `{ auctionId, to }`                                                    | organizer                                    | state-machine transition (§9): `RE_AUCTION` \| `ASSIGNMENT` \| `COMPLETED`                       |
+| `ASSIGN_PLAYER`   | `{ auctionId, auctionPlayerId, teamId }`                               | organizer (force) / franchise owner (choose) | ASSIGNMENT: assign a remaining player at `unsoldPrice`; franchise picks only on their turn (§9)  |
+| `ASSIGN_SKIP`     | `{ auctionId, teamId }`                                                | organizer                                    | toggle a team out of / back into the pick rotation (an absent team must not stall the draft)     |
+| `AUTO_START`      | `{ auctionId }`                                                        | organizer                                    | hand the auction to the bot engine (§13); manual controls lock                                   |
+| `AUTO_STOP`       | `{ auctionId }`                                                        | organizer                                    | freeze the bots in place (auction stays LIVE, open lot keeps price/leader); manual control back  |
+| `AUCTION_SUSPEND` | `{ auctionId }`                                                        | organizer                                    | whole-auction pause (block must be empty); resumable                                             |
+| `AUCTION_RESUME`  | `{ auctionId }`                                                        | organizer                                    | back to the round it was suspended in (LIVE / RE_AUCTION)                                        |
+| `AUCTION_CANCEL`  | `{ auctionId }`                                                        | organizer                                    | terminal soft-cancel; records kept for history                                                   |
 
 > `amount` and `version` in `BID_PLACE` make the bid a **compare-and-set**: the
 > client asserts "I am raising version N to `amount`". A stale version loses (§6).
@@ -201,12 +240,17 @@ idempotency where noted. Every server→client broadcast carries `seq`.
 | `BID_ACCEPTED`      | `{ seq, auctionPlayerId, currentPrice, leadingTeamId, version, endsAt, requiredNextBid, bid: { teamId, bidderUserId, amount, createdAt }, team: { id, committedAmount, maxBid } }` |
 | `BID_REJECTED`      | `{ seq, clientBidId, code, message }` — **to the bidding socket only**                                                                                                             |
 | `LOT_TIMER_EXPIRED` | `{ seq, auctionPlayerId }` — lot frozen, awaiting organizer decision                                                                                                               |
-| `LOT_SOLD`          | `{ seq, auctionPlayerId, soldToTeamId, soldPrice, team: { id, committedAmount, playerCount, maxBid }, lotCounts }`                                                                 |
-| `LOT_UNSOLD`        | `{ seq, auctionPlayerId, lotCounts }`                                                                                                                                              |
-| `PLAYER_ASSIGNED`   | `{ seq, auctionPlayerId, teamId, price, acquiredVia, team: { id, committedAmount, playerCount, maxBid }, lotCounts }`                                                              |
+| `LOT_SOLD`          | `{ seq, auctionPlayerId, soldToTeamId, soldPrice, team: { id, committedAmount, playerCount, maxBid }, lotCounts, lot }`                                                            |
+| `LOT_UNSOLD`        | `{ seq, auctionPlayerId, lotCounts, lot }`                                                                                                                                         |
+| `PLAYER_ASSIGNED`   | `{ seq, auctionPlayerId, teamId, price, acquiredVia, team, lotCounts, lot, assignment }` — carries the post-pick rotation (§9)                                                     |
+| `ASSIGN_TURN`       | `{ seq, assignment: { pickQueue, skipped } }` — rotation changed without a player moving (organizer skip/unskip)                                                                   |
 | `TIMER_PAUSED`      | `{ seq, auctionPlayerId, remainingMs }`                                                                                                                                            |
 | `TIMER_RESUMED`     | `{ seq, auctionPlayerId, endsAt }`                                                                                                                                                 |
-| `PHASE_CHANGED`     | `{ seq, status, round }`                                                                                                                                                           |
+| `PHASE_CHANGED`     | `{ seq, status, round, assignment }` — `assignment` is the fresh rotation when entering ASSIGNMENT, else `null`                                                                    |
+| `AUTO_FINISHED`     | `{ seq, status, round, completed, report }` — end of an auto-pilot run, with the best-effort per-team squad report (§13)                                                           |
+| `AUTO_STOPPED`      | `{ seq }` — organizer froze the bots mid-run; a fresh `STATE_SNAPSHOT` follows                                                                                                     |
+| `PRESENCE_PING`     | per-socket probe with an **ack callback** — the client invokes it immediately; the round trip is the latency (§14)                                                                 |
+| `PRESENCE`          | `{ users: { [userId]: rttMs \| null } }` — **to the auction's organizer/admin sockets only**, every ~5s; no `seq` (display-only side channel, §14)                                 |
 | `ERROR`             | `{ code, message }` — **to the offending socket only**                                                                                                                             |
 
 `BID_REJECTED` is distinct from `ERROR`: rejection is a _normal_ outcome of the
@@ -399,50 +443,74 @@ Phase 4 config-lock); it cannot flip mid-auction.
 ## 9. Auction state machine
 
 ```
-DRAFT ──LOT control──▶ LIVE ⇄ PAUSED
-  │                     │
-  │                     ▼
-  │              RE_AUCTION (round = RE_AUCTION) ⇄ PAUSED
-  │                     │
-  │                     ▼
-  │                ASSIGNMENT
-  │                     │
-  └─────────────────────▼
-                   COMPLETED
+DRAFT ──go-live──▶ LIVE ⇄ PAUSED
+  │                 │  ⇅ SUSPENDED (whole-auction pause; also forced by a season rival going live)
+  │                 ▼
+  │          RE_AUCTION ("unsold auction"; chainable onto itself) ⇄ PAUSED/SUSPENDED
+  │                 │
+  │                 ▼
+  │            ASSIGNMENT
+  │                 │
+  └─────────────────▼
+               COMPLETED          (any non-terminal state ──▶ CANCELLED)
 ```
 
-All transitions are organizer-driven (`PHASE_ADVANCE`), except `PAUSED` which is
-the timer pause overlay on `LIVE`/`RE_AUCTION`.
+All transitions are organizer-driven (`PHASE_ADVANCE` /
+`AUCTION_SUSPEND|RESUME|CANCEL`), except `PAUSED` (the per-lot timer pause
+overlay) and the forced suspension below. No transition may run with a lot
+still `ON_BLOCK`.
 
-| From         | To           | Guard                                                                                                                                               |
-| ------------ | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DRAFT`      | `LIVE`       | go-live gate (already built: rules set, ≥1 lot, `minTeams ≤ #teams ≤ maxTeams`). Locks config.                                                      |
-| `LIVE`       | `PAUSED`     | active lot timer freezes (§7)                                                                                                                       |
-| `PAUSED`     | `LIVE`       | resume                                                                                                                                              |
-| `LIVE`       | `RE_AUCTION` | no lot `ON_BLOCK`. Resets all `UNSOLD` main-round lots **in place** → `round = RE_AUCTION, status = PENDING`, clear `currentPrice`/`leadingTeamId`. |
-| `RE_AUCTION` | `ASSIGNMENT` | no lot `ON_BLOCK`.                                                                                                                                  |
-| `ASSIGNMENT` | `COMPLETED`  | **every** team has `playerCount >= minPlayersPerTeam` (else `MIN_NOT_MET`).                                                                         |
+**One live auction per season.** Go-live calls `suspendSeasonRivals`: every
+OTHER auction of the same season in `LIVE/PAUSED/RE_AUCTION/ASSIGNMENT` is
+force-`SUSPENDED` (an on-block lot is put back to `PENDING`), and their rooms
+get fresh snapshots. A suspended auction resumes into the round it left
+(`LIVE` for MAIN, `RE_AUCTION` for the unsold round).
 
-**Scope (locked): Phase 5 + Phase 6 built together.** This pass implements the
-full lifecycle through `COMPLETED`:
+| From              | To           | Guard / effect                                                                                                                                                                                                    |
+| ----------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DRAFT`           | `LIVE`       | go-live gate (rules set, ≥1 lot, ≥2 teams). Locks config, materializes `Team` rows, suspends season rivals.                                                                                                        |
+| `LIVE`            | `PAUSED`     | active lot timer freezes (§7)                                                                                                                                                                                        |
+| `PAUSED`          | `LIVE`       | resume                                                                                                                                                                                                               |
+| `LIVE/RE_AUCTION` | `RE_AUCTION` | the **unsold auction sweep**: EVERY player not yet won — `UNSOLD` in any round **or never opened** (`PENDING`) — moves to `round = RE_AUCTION, status = PENDING`, price/leader cleared. Guard: ≥1 such player. **Chainable**: a further unsold auction can start from an unsold round with leftovers. |
+| `LIVE/RE_AUCTION` | `ASSIGNMENT` | no lot on the block                                                                                                                                                                                                  |
+| `ASSIGNMENT`      | `COMPLETED`  | **every** team has `playerCount >= minPlayersPerTeam` (else `MIN_NOT_MET`). Then, in one transaction, every still-`PENDING` lot is recorded **`UNSOLD`** — the auction closes with all lots terminal.               |
+| any non-terminal  | `SUSPENDED`  | organizer suspend (block must be empty) or forced by a rival's go-live                                                                                                                                               |
+| any non-terminal  | `CANCELLED`  | terminal soft-cancel; all records kept                                                                                                                                                                               |
 
-- `DRAFT→LIVE`, `LIVE⇄PAUSED`, the MAIN round (open/freeze/sell/unsold) — Phase 5.
-- `RE_AUCTION` (reset unsold in place, re-run the same lot loop on round
-  `RE_AUCTION`), `ASSIGNMENT`, and `COMPLETED` — Phase 6.
+**Opening price is round-aware** (`openingPrice` in `services/reserve.ts`): a
+lot opened in the `RE_AUCTION` round starts at `rules.unsoldPrice` instead of
+its `basePrice`. Bid validation, `requiredNextBid`, snapshots and the bot
+engine all share this single function.
 
-### ASSIGNMENT phase (`ASSIGN_PLAYER`)
+### ASSIGNMENT phase — full list + pick rotation
 
-- Assignable players = lots still `PENDING`/`UNSOLD` (not sold/assigned), within
-  the auction.
-- A **franchise owner** may _choose_ a player for **their own** team
-  (`acquiredVia = CHOSEN`); the **organizer** may _force-assign_ any remaining
-  player to any team below minimum (`acquiredVia = FORCE_ASSIGNED`). Price =
-  `rules.unsoldPrice`.
-- Guards: `team.playerCount < maxPlayersPerTeam`; `committedAmount + unsoldPrice
-<= creditPerTeam` (`RESERVE_EXCEEDED`). Atomic: create `TeamPlayer`, set lot
-  `status = ASSIGNED`, `soldToTeamId`, `soldPrice = unsoldPrice`, bump tallies.
-  Broadcast `PLAYER_ASSIGNED`.
-- `ASSIGNMENT→COMPLETED` is gated on every team meeting `minPlayersPerTeam`.
+Assignable players = lots still `PENDING`/`UNSOLD` (everyone without a team,
+including players never opened). The client shows them as a full list grouped
+into role sections (batsmen / wicketkeepers / pace / spin / all-rounders); the
+price is always `rules.unsoldPrice`.
+
+**Pick rotation** (`services/assignment.ts`). Teams take players ONE at a time:
+
+- The order is fixed at the start of assignment: **most free slots first**,
+  alphabetical (franchise name) on ties. Picks then alternate round by round —
+  a team that starts several slots behind cannot take them all in a row.
+- **Every player a team receives counts as its turn**, whether a franchise
+  self-pick (`acquiredVia = CHOSEN`) or an organizer force-assign
+  (`FORCE_ASSIGNED`).
+- Eligibility: below `maxPlayersPerTeam`, can afford `unsoldPrice`, not
+  skipped. Ineligible teams drop out; the rest continue in the same order.
+- The rotation is **derived, not stored**: `CHOSEN`/`FORCE_ASSIGNED`
+  acquisitions only happen in this phase, so picks-so-far = their count and the
+  entry order falls out of `playerCount - picks`. Restart-safe with no cursor.
+- A **franchise** may pick only when its team is `pickQueue[0]`
+  (`NOT_YOUR_TURN` otherwise, enforced server-side). The **organizer** may
+  force-assign to any eligible team at any time, and may `ASSIGN_SKIP` an
+  absent team out of the rotation (toggle back with the same event). Skips are
+  in-memory and reset on phase change / restart.
+- Guards per assignment: `TEAM_FULL`, `RESERVE_EXCEEDED`
+  (`committedAmount + unsoldPrice <= creditPerTeam`). Atomic: create
+  `TeamPlayer`, lot → `ASSIGNED`, bump tallies. Broadcast `PLAYER_ASSIGNED`
+  with the post-pick rotation.
 
 ---
 
@@ -460,6 +528,8 @@ STALE_VERSION      // client version behind current
 DUPLICATE_BID      // (info) idempotent replay of a clientBidId
 NO_LEADER          // LOT_SELL with no bid on the lot
 MIN_NOT_MET        // ASSIGNMENT→COMPLETED while a team is below minPlayersPerTeam
+NOT_YOUR_TURN      // franchise ASSIGN_PLAYER out of rotation order (§9)
+INCOMPLETE_LINEUP  // REST lineup save with any validator violation (complete-or-nothing)
 ```
 
 Existing codes reused: `FORBIDDEN`, `UNAUTHENTICATED`, `NOT_FOUND`,
@@ -467,52 +537,63 @@ Existing codes reused: `FORBIDDEN`, `UNAUTHENTICATED`, `NOT_FOUND`,
 
 ---
 
-## 11. Server module layout (Phase 5 additions)
+## 11. Server module layout (as built)
 
 ```
 server/src/realtime/
-  gateway.ts        // io.use auth middleware, connection + AUCTION_JOIN/LEAVE, room mgmt
-  events.ts         // event-name constants + Zod payload schemas (shared with client via /shared)
-  handlers/
-    bid.handler.ts      // BID_PLACE → pipeline
-    lot.handler.ts      // LOT_OPEN / LOT_FINALIZE / LOT_REOPEN
-    timer.handler.ts    // TIMER_PAUSE / TIMER_RESUME + the in-memory timer registry + safety sweep
-    phase.handler.ts    // PHASE_ADVANCE (DRAFT→LIVE, LIVE⇄PAUSED in P5)
+  gateway.ts        // io.use auth middleware, ALL event handlers, room mgmt
+  authz.ts          // canViewAuction / requireOrganizer / requireManualControl / auctionOwnerId
   snapshot.ts       // buildStateSnapshot(auctionId) -> STATE_SNAPSHOT
-  broadcast.ts      // seq counter + room emit helpers
+  broadcast.ts      // seq counter + room/socket emit helpers
+  mappers.ts        // Prisma rows -> wire DTOs (SnapshotTeam, LiveLot, CurrentLot, …)
+  timer.ts          // in-memory lot-timer registry + crash-safety sweep
+  presence.ts       // room presence + RTT probes, organizer-only reports (§14)
 server/src/services/
-  reserve.ts        // maxBid(), requiredIncrement() — pure, fully unit-tested
-  bid-pipeline.ts   // the ordered gauntlet (§6), transaction + CAS
-  finalize.ts       // SOLD/UNSOLD finalize transaction (§7)
+  reserve.ts        // maxBid(), requiredIncrement(), openingPrice() — pure, unit-tested
+  bid-pipeline.ts   // the ordered gauntlet (§6), CAS + undo/reset corrections
+  lot.ts            // LOT_OPEN
+  finalize.ts       // SOLD/UNSOLD finalize + reverseLastSale + rebidLot
+  phase.ts          // advancePhase (§9), suspend/resume/cancel, suspendSeasonRivals
+  assignment.ts     // assignPlayer + pick rotation (pickQueueFrom, skips) — unit-tested
+  lineup-validator.ts // per-sport lineup rules (complete-or-nothing saves) — unit-tested
+  auto-pilot/
+    engine.ts       // the bot run loop (§13)
+    valuation.ts    // par-price bot valuation model — unit-tested
+    roles.ts        // squad-target bookkeeping + soft role caps — unit-tested
+    bot.ts          // per-team bot decision (bid/pass) — unit-tested
 ```
 
 - Event payload Zod schemas live in `shared/src/realtime.ts` so client and
   server validate the same shapes (mirrors how REST DTOs are shared today).
-- `reserve.ts` is the mandatory unit-test target (build-plan §6). Pure functions
-  over plain `{ creditPerTeam, committedAmount, minPlayersPerTeam, playerCount,
-maxPlayersPerTeam, unsoldPrice }` + `Decimal` — no DB, no socket.
-- The socket bootstrap in `index.ts` (currently a stub) is replaced by
-  `gateway.ts` wiring.
+- `reserve.ts`, `assignment.ts`, `lineup-validator.ts` and the `auto-pilot/*`
+  models are the unit-test targets (88 tests). End-to-end socket flows are
+  exercised by the repo-root harnesses `smoke-auto-pilot.mjs`,
+  `test-unsold-flow.mjs`, `test-pwd-presence.mjs` against a running server.
 
 ---
 
-## 12. Client architecture (Phase 5 additions)
+## 12. Client architecture (as built)
 
 ```
 client/src/socket/
-  socket.ts         // singleton io() with auth token injection + reconnect
+  socket.ts         // singleton io() with auth token injection + PRESENCE_PING ack
   useAuctionRoom.ts // hook: join, hold snapshot state, apply deltas, expose actions
 client/src/features/auction-live/
-  AuctionLivePage.tsx    // the centerpiece screen
-  CurrentLotCard.tsx     // player, price, leader, countdown
-  TeamsBoard.tsx         // all teams: credit, committed, squad count, maxBid
-  BidControls.tsx        // mode-aware: franchise self-bid vs organizer team-picker
-  OrganizerControls.tsx  // open next lot, finalize, pause/resume, phase advance
-  LotQueue.tsx           // pending/sold/unsold roster
+  AuctionLivePage.tsx    // the centerpiece screen: current lot, bid controls,
+                         // organizer controls (corrections, phases, auto-pilot),
+                         // TeamsBoard (+ signal bars), role-sectioned lot queue,
+                         // AssignmentPanel (pick rotation + grouped player list),
+                         // auto-pilot report, unsold-players card on COMPLETED
+  widgets.tsx            // StatusBadge, Countdown, fmtCr, PlayerIcon, …
+client/src/features/monitor/AuctionMonitorPage.tsx  // REST monitor + presence bars
+client/src/components/ui/
+  signal-bars.tsx   // latency tiers: <150ms green ▂▄▆ / <500ms amber / red / grey offline
+  role-icon.tsx     // cricket role SVGs (bat / pace / spin / bat+ball / gloves)
 ```
 
 - `useAuctionRoom` holds the snapshot, applies `seq`-ordered deltas, and
-  re-joins (re-snapshots) on reconnect or a `seq` gap.
+  re-joins (re-snapshots) on reconnect or a `seq` gap. `PRESENCE` and
+  `AUTO_FINISHED/AUTO_STOPPED` are side channels held outside the snapshot.
 - Money stays a **string** end-to-end in the client; format for display only,
   never `parseFloat` for arithmetic. Bid amount the client sends is the
   server-provided `requiredNextBid` (the client never computes increments).
@@ -520,16 +601,89 @@ client/src/features/auction-live/
 
 ---
 
-## 13. Decisions (resolved 2026-06-26)
+## 13. Auto-pilot (server bot engine)
+
+The organizer can hand the whole auction to bots (`AUTO_START`); manual
+controls lock (`requireManualControl`) until `AUTO_STOP` or the run finishes.
+
+- **Run loop** (`auto-pilot/engine.ts`): opens lots round-robin across role
+  sections (BATSMAN → WK → PACE → SPIN → ALL_ROUNDER, position derived from the
+  finalized-lot count — deterministic and resume-safe), lets team bots bid,
+  hammers, finalizes; advances phases itself: MAIN → RE_AUCTION → ASSIGNMENT
+  (force-fill to minimum + best-effort role targets) → COMPLETED, then emits
+  `AUTO_FINISHED` with a per-team squad report.
+- **Valuation** (`valuation.ts`): anchored on **par price** = remaining credit ÷
+  remaining slots (self-corrects spend toward high budget utilization), scaled
+  by a quality² star factor, role-need, scarcity, a per-team personality
+  (aggressive / balanced / frugal) and deterministic jitter (FNV-1a hashes — no
+  `Math.random` in state decisions). Filler players value below the opening
+  price → all bots pass → natural UNSOLD lots.
+- **Discipline**: slot budgeting and a soft per-role cap keep bots from
+  hoarding one role; all bids go through the same `BID_PLACE` pipeline (§6) —
+  bots get no special powers.
+- **Stop = freeze**: `AUTO_STOP` halts bots where they stand (an open lot keeps
+  its price/leader, checked again after the hammer pause so a stop mid-hammer
+  never finalizes). The auction stays LIVE; `AUTO_START` may resume, even
+  mid-lot. Crash recovery: on boot, auctions flagged `autoPilot` resume their
+  run.
+
+---
+
+## 14. Presence (connection bars)
+
+- Every socket that joins an auction room is tracked in
+  `realtime/presence.ts`; a ~5s loop emits `PRESENCE_PING` with an ack timeout
+  per socket — the ack round-trip is the user's latency.
+- Reports (`PRESENCE { users: { userId: rttMs | null } }`) go **only to that
+  auction's organizer/owner + super-admin sockets**; franchises never see each
+  other's connection state. A user absent from the map is offline; with
+  multiple tabs the best RTT wins.
+- The REST monitor (`GET /api/monitor/auctions/:id`) embeds the same map as
+  `presence` when `canManage` — the monitor page renders bars per team owner.
+- UI tiers (`signal-bars.tsx`): `<150ms` 3 green bars, `<500ms` 2 amber, above
+  1 red, grey empty = offline / not joined.
+- All in-memory and display-only: a server restart just starts measuring again;
+  no `seq`, never part of the snapshot.
+
+---
+
+## 15. Decisions
+
+Resolved 2026-06-26:
 
 1. **Anti-snipe** — **OUT.** `endsAt` set once at `LOT_OPEN`, never extended.
 2. **Timer expiry** — **FREEZE, organizer decides.** Zero does not finalize and
    never auto-advances; lot freezes; organizer issues `LOT_SELL` /
    `LOT_MARK_UNSOLD` / `TIMER_ADD`, then `LOT_OPEN` for the next player (§7).
-3. **`LOT_REOPEN`** (undo finalize) — **deferred**, not in v1.
+3. **`LOT_REOPEN`** (undo finalize) — originally deferred; **since built** as
+   the corrections pair `SALE_REVERSE` (undo last sale, pre-sell state) and
+   `LOT_REBID` (fresh re-auction of a finished lot).
 4. **Scope** — **Phase 5 + Phase 6 together**: full lifecycle through
    `COMPLETED`, including re-auction and assignment (§9).
 5. **Spectators** — out of v1; entitled participants only (§3).
 6. **Worked-example** (§6.1) — `committedAmount = 97.0` reconstructed for the
    "7th-player max bid = 0.5" anchor. Still worth a glance, but it's
    self-consistent and now the unit-test source of truth.
+
+Resolved 2026-06-28 → 2026-07-04:
+
+7. **Unsold auction** (2026-06-28) — one auction per season; the `RE_AUCTION`
+   round is the "unsold auction" run after the main auction. The sweep takes
+   ALL players not yet won (unsold **or never opened**); bidding restarts at
+   `unsoldPrice`; chainable. Going live on another auction in the season
+   force-suspends the running one.
+8. **End this auction** (2026-06-28) — `ASSIGNMENT → COMPLETED` records every
+   remaining `PENDING` lot as `UNSOLD` in the DB; the min-squad gate stays.
+9. **Auto-pilot stop = freeze** (2026-06-28) — stopping bots never cancels the
+   auction; it freezes in place and is resumable mid-lot (§13).
+10. **Complete-or-nothing lineups** (2026-07-03) — a lineup save with ANY
+    validator violation is rejected (`INCOMPLETE_LINEUP`, 409); no draft saves.
+    Same rule for franchises, organizers and admins.
+11. **Assignment pick rotation** (2026-07-04) — fixed entry order (most free
+    slots, alphabetical ties), strict one-by-one turns, force-assign consumes
+    the turn, organizer skip/unskip; franchise picks enforced server-side (§9).
+12. **Forced password change** (2026-07-04) — every password set by someone
+    else (provision or reset) must be replaced on next login; pre-existing
+    accounts backfilled by migration; seed admin exempt (§3).
+13. **Presence is organizer-only** (2026-07-04) — connection bars are visible
+    to the auction organizer/admin only, on the live page and monitor (§14).

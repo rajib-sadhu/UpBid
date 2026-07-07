@@ -31,10 +31,15 @@ export const CLIENT_EVENTS = {
   TIMER_RESUME: "TIMER_RESUME",
   PHASE_ADVANCE: "PHASE_ADVANCE",
   ASSIGN_PLAYER: "ASSIGN_PLAYER",
+  // Organizer toggles a team out of / back into the assignment pick rotation
+  // (an absent team must not stall everyone else's turns).
+  ASSIGN_SKIP: "ASSIGN_SKIP",
   // Auto-pilot: organizer hands the whole auction to the server bot engine.
-  // There is no separate stop event — AUCTION_SUSPEND / AUCTION_CANCEL are the
-  // kill-switch that breaks the loop.
+  // AUTO_STOP freezes the bots immediately (the auction stays LIVE and the
+  // organizer takes manual control; AUTO_START may resume later, even mid-lot).
+  // AUCTION_SUSPEND / AUCTION_CANCEL remain the whole-auction kill-switch.
   AUTO_START: "AUTO_START",
+  AUTO_STOP: "AUTO_STOP",
   // Whole-auction lifecycle (organizer; broadcast a fresh snapshot).
   AUCTION_SUSPEND: "AUCTION_SUSPEND",
   AUCTION_RESUME: "AUCTION_RESUME",
@@ -52,12 +57,23 @@ export const SERVER_EVENTS = {
   LOT_SOLD: "LOT_SOLD",
   LOT_UNSOLD: "LOT_UNSOLD",
   PLAYER_ASSIGNED: "PLAYER_ASSIGNED",
+  // Assignment pick rotation changed without a player moving (organizer skip).
+  ASSIGN_TURN: "ASSIGN_TURN",
   TIMER_PAUSED: "TIMER_PAUSED",
   TIMER_RESUMED: "TIMER_RESUMED",
   PHASE_CHANGED: "PHASE_CHANGED",
   // Auto-pilot finished (reached COMPLETED or stopped short); carries the
   // best-effort squad-composition report.
   AUTO_FINISHED: "AUTO_FINISHED",
+  // Auto-pilot was stopped by the organizer mid-run: bots freeze in place, the
+  // auction stays live and manual control returns (no report — nothing ended).
+  AUTO_STOPPED: "AUTO_STOPPED",
+  // Connection-quality probe: emitted per socket with an ack callback the
+  // client must invoke immediately; the round trip is the user's latency.
+  PRESENCE_PING: "PRESENCE_PING",
+  // Per-auction connection report, sent only to the auction's organizer/admin
+  // sockets every few seconds. No seq — display-only, not auction state.
+  PRESENCE: "PRESENCE",
   ERROR: "ERROR",
 } as const;
 export type ServerEvent = (typeof SERVER_EVENTS)[keyof typeof SERVER_EVENTS];
@@ -114,8 +130,17 @@ export const assignPlayerSchema = z.object({
 });
 export type AssignPlayerPayload = z.infer<typeof assignPlayerSchema>;
 
+export const assignSkipSchema = z.object({
+  auctionId: z.string().min(1),
+  teamId: z.string().min(1),
+});
+export type AssignSkipPayload = z.infer<typeof assignSkipSchema>;
+
 export const autoStartSchema = z.object({ auctionId: z.string().min(1) });
 export type AutoStartPayload = z.infer<typeof autoStartSchema>;
+
+export const autoStopSchema = z.object({ auctionId: z.string().min(1) });
+export type AutoStopPayload = z.infer<typeof autoStopSchema>;
 
 // ---- Server → client DTOs --------------------------------------------------
 
@@ -215,6 +240,20 @@ export interface LiveLot {
   bowlingStyle: BowlingStyle | null;
 }
 
+/**
+ * ASSIGNMENT-phase pick rotation. Teams take players one at a time in a fixed
+ * order (most free slots at phase entry first, alphabetical on ties), cycling
+ * round by round; every player received (self-pick or force-assign) consumes
+ * the team's turn. Only teams still able to receive a player (below the squad
+ * cap, can afford the unsold price, not skipped) are listed — index 0 picks
+ * now. Server-computed; franchise self-picks are rejected out of turn.
+ */
+export interface AssignmentState {
+  pickQueue: string[];
+  /** Teams the organizer skipped out of the rotation (force-assign still works). */
+  skipped: string[];
+}
+
 export interface LotCounts {
   PENDING: number;
   ON_BLOCK: number;
@@ -231,6 +270,8 @@ export interface StateSnapshot {
   teams: SnapshotTeam[];
   currentLot: CurrentLot | null;
   lots: { counts: LotCounts; items: LiveLot[] };
+  /** Pick rotation; non-null only while the auction is in ASSIGNMENT. */
+  assignment: AssignmentState | null;
   /** Server clock for client skew correction. ISO. */
   serverTime: string;
 }
@@ -293,6 +334,13 @@ export interface PlayerAssignedEvent {
   team: TeamTally;
   lotCounts: LotCounts;
   lot: LiveLot;
+  /** Rotation after this assignment (the receiving team's free slots shrank). */
+  assignment: AssignmentState;
+}
+
+export interface AssignTurnEvent {
+  seq: number;
+  assignment: AssignmentState;
 }
 
 export interface TimerPausedEvent {
@@ -311,6 +359,8 @@ export interface PhaseChangedEvent {
   seq: number;
   status: AuctionStatus;
   round: AuctionRound;
+  /** Fresh pick rotation when entering ASSIGNMENT; null otherwise. */
+  assignment: AssignmentState | null;
 }
 
 // ---- Auto-pilot report -----------------------------------------------------
@@ -350,6 +400,20 @@ export interface AutoFinishedEvent {
   /** True if the run reached COMPLETED; false if it stopped short (pool too small / aborted). */
   completed: boolean;
   report: TeamSquadReport[];
+}
+
+/** Auto-pilot stopped by the organizer; a fresh STATE_SNAPSHOT follows. */
+export interface AutoStoppedEvent {
+  seq: number;
+}
+
+/**
+ * Who is connected to the auction room and how good their connection is.
+ * Key = userId, value = last measured round-trip in ms (null = connected but
+ * not yet measured). A user absent from the map is offline / not joined.
+ */
+export interface PresenceEvent {
+  users: Record<string, number | null>;
 }
 
 /** Sent only to the offending socket — a protocol/authz fault. */

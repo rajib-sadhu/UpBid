@@ -149,6 +149,9 @@ export async function deleteSeason(req: Request, res: Response): Promise<void> {
   if (!id) throw Errors.notFound();
   const auctions = await prisma.auction.count({ where: { seasonId: id } });
   if (auctions > 0) throw Errors.conflict("Delete the season's auctions first");
-  await prisma.season.delete({ where: { id } });
+  await prisma.$transaction([
+    prisma.seasonFranchise.deleteMany({ where: { seasonId: id } }),
+    prisma.season.delete({ where: { id } }),
+  ]);
   res.status(204).end();
 }

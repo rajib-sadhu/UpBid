@@ -53,6 +53,50 @@ export declare const createFranchiseUserSchema: z.ZodObject<{
     password: string;
 }>;
 export type CreateFranchiseUserInput = CreateUserInput;
+export declare const changePasswordSchema: z.ZodEffects<z.ZodObject<{
+    currentPassword: z.ZodString;
+    newPassword: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    currentPassword: string;
+    newPassword: string;
+}, {
+    currentPassword: string;
+    newPassword: string;
+}>, {
+    currentPassword: string;
+    newPassword: string;
+}, {
+    currentPassword: string;
+    newPassword: string;
+}>;
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export declare const resetPasswordSchema: z.ZodObject<{
+    password: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    password: string;
+}, {
+    password: string;
+}>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export declare const updateProfileSchema: z.ZodObject<{
+    name: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    name: string;
+}, {
+    name: string;
+}>;
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+/** One organization line on the profile page. */
+export interface ProfileAffiliation {
+    /** e.g. "Mumbai Premier League" or "Mumbai Warriors (MPA) — Mumbai Premier League" */
+    name: string;
+    /** "Organizer" | "Franchise owner" */
+    role: string;
+}
+export interface MyProfile {
+    user: PublicUser;
+    affiliations: ProfileAffiliation[];
+}
 /** A user as exposed over the wire — never includes passwordHash. */
 export interface PublicUser {
     id: string;
@@ -60,6 +104,8 @@ export interface PublicUser {
     name: string;
     role: Role;
     status: UserStatus;
+    /** Password was set by someone else — must be changed before using the app. */
+    mustChangePassword: boolean;
     createdById: string | null;
     createdAt: string;
 }

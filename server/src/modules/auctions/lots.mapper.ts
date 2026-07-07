@@ -12,6 +12,8 @@ export function toLot(l: LotWithPlayer): Lot {
     playerName: l.player.name,
     sport: l.player.sport,
     footballPosition: l.player.footballPosition,
+    cricketRole: l.player.cricketRole,
+    bowlingStyle: l.player.bowlingStyle,
     basePrice: moneyToWire(l.basePrice),
     isOverseas: l.isOverseas,
     status: l.status,

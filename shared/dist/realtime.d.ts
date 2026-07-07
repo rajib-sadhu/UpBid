@@ -20,7 +20,9 @@ export declare const CLIENT_EVENTS: {
     readonly TIMER_RESUME: "TIMER_RESUME";
     readonly PHASE_ADVANCE: "PHASE_ADVANCE";
     readonly ASSIGN_PLAYER: "ASSIGN_PLAYER";
+    readonly ASSIGN_SKIP: "ASSIGN_SKIP";
     readonly AUTO_START: "AUTO_START";
+    readonly AUTO_STOP: "AUTO_STOP";
     readonly AUCTION_SUSPEND: "AUCTION_SUSPEND";
     readonly AUCTION_RESUME: "AUCTION_RESUME";
     readonly AUCTION_CANCEL: "AUCTION_CANCEL";
@@ -36,10 +38,14 @@ export declare const SERVER_EVENTS: {
     readonly LOT_SOLD: "LOT_SOLD";
     readonly LOT_UNSOLD: "LOT_UNSOLD";
     readonly PLAYER_ASSIGNED: "PLAYER_ASSIGNED";
+    readonly ASSIGN_TURN: "ASSIGN_TURN";
     readonly TIMER_PAUSED: "TIMER_PAUSED";
     readonly TIMER_RESUMED: "TIMER_RESUMED";
     readonly PHASE_CHANGED: "PHASE_CHANGED";
     readonly AUTO_FINISHED: "AUTO_FINISHED";
+    readonly AUTO_STOPPED: "AUTO_STOPPED";
+    readonly PRESENCE_PING: "PRESENCE_PING";
+    readonly PRESENCE: "PRESENCE";
     readonly ERROR: "ERROR";
 };
 export type ServerEvent = (typeof SERVER_EVENTS)[keyof typeof SERVER_EVENTS];
@@ -128,6 +134,17 @@ export declare const assignPlayerSchema: z.ZodObject<{
     teamId: string;
 }>;
 export type AssignPlayerPayload = z.infer<typeof assignPlayerSchema>;
+export declare const assignSkipSchema: z.ZodObject<{
+    auctionId: z.ZodString;
+    teamId: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    auctionId: string;
+    teamId: string;
+}, {
+    auctionId: string;
+    teamId: string;
+}>;
+export type AssignSkipPayload = z.infer<typeof assignSkipSchema>;
 export declare const autoStartSchema: z.ZodObject<{
     auctionId: z.ZodString;
 }, "strip", z.ZodTypeAny, {
@@ -136,6 +153,14 @@ export declare const autoStartSchema: z.ZodObject<{
     auctionId: string;
 }>;
 export type AutoStartPayload = z.infer<typeof autoStartSchema>;
+export declare const autoStopSchema: z.ZodObject<{
+    auctionId: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    auctionId: string;
+}, {
+    auctionId: string;
+}>;
+export type AutoStopPayload = z.infer<typeof autoStopSchema>;
 export interface SnapshotAuction {
     id: string;
     name: string;
@@ -225,6 +250,19 @@ export interface LiveLot {
     cricketRole: CricketRole | null;
     bowlingStyle: BowlingStyle | null;
 }
+/**
+ * ASSIGNMENT-phase pick rotation. Teams take players one at a time in a fixed
+ * order (most free slots at phase entry first, alphabetical on ties), cycling
+ * round by round; every player received (self-pick or force-assign) consumes
+ * the team's turn. Only teams still able to receive a player (below the squad
+ * cap, can afford the unsold price, not skipped) are listed — index 0 picks
+ * now. Server-computed; franchise self-picks are rejected out of turn.
+ */
+export interface AssignmentState {
+    pickQueue: string[];
+    /** Teams the organizer skipped out of the rotation (force-assign still works). */
+    skipped: string[];
+}
 export interface LotCounts {
     PENDING: number;
     ON_BLOCK: number;
@@ -243,6 +281,8 @@ export interface StateSnapshot {
         counts: LotCounts;
         items: LiveLot[];
     };
+    /** Pick rotation; non-null only while the auction is in ASSIGNMENT. */
+    assignment: AssignmentState | null;
     /** Server clock for client skew correction. ISO. */
     serverTime: string;
 }
@@ -301,6 +341,12 @@ export interface PlayerAssignedEvent {
     team: TeamTally;
     lotCounts: LotCounts;
     lot: LiveLot;
+    /** Rotation after this assignment (the receiving team's free slots shrank). */
+    assignment: AssignmentState;
+}
+export interface AssignTurnEvent {
+    seq: number;
+    assignment: AssignmentState;
 }
 export interface TimerPausedEvent {
     seq: number;
@@ -316,6 +362,8 @@ export interface PhaseChangedEvent {
     seq: number;
     status: AuctionStatus;
     round: AuctionRound;
+    /** Fresh pick rotation when entering ASSIGNMENT; null otherwise. */
+    assignment: AssignmentState | null;
 }
 /** A single squad-composition role line in the best-effort auto-pilot report. */
 export declare const SQUAD_ROLE_KEYS: readonly ["WICKETKEEPER", "BATSMAN", "OPENER", "PACE_BOWLER", "SPINNER", "ALL_ROUNDER"];
@@ -342,6 +390,18 @@ export interface AutoFinishedEvent {
     /** True if the run reached COMPLETED; false if it stopped short (pool too small / aborted). */
     completed: boolean;
     report: TeamSquadReport[];
+}
+/** Auto-pilot stopped by the organizer; a fresh STATE_SNAPSHOT follows. */
+export interface AutoStoppedEvent {
+    seq: number;
+}
+/**
+ * Who is connected to the auction room and how good their connection is.
+ * Key = userId, value = last measured round-trip in ms (null = connected but
+ * not yet measured). A user absent from the map is offline / not joined.
+ */
+export interface PresenceEvent {
+    users: Record<string, number | null>;
 }
 /** Sent only to the offending socket — a protocol/authz fault. */
 export interface SocketErrorEvent {

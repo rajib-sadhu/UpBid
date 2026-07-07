@@ -23,6 +23,9 @@ export function AppLayout() {
             <Link to="/" className="hover:text-slate-100">
               Dashboard
             </Link>
+            <Link to="/my/leagues" className="hover:text-slate-100">
+              {user?.role === "FRANCHISE" ? "My Leagues" : "Teams"}
+            </Link>
             {canManageUsers && (
               <>
                 <Link to="/leagues" className="hover:text-slate-100">
@@ -39,9 +42,13 @@ export function AppLayout() {
           </nav>
         </div>
         <div className="flex items-center gap-4 text-sm">
-          <span className="text-slate-400">
-            {user?.email} · <span className="text-slate-500">{user?.role}</span>
-          </span>
+          <Link
+            to="/profile"
+            title="Your profile"
+            className="text-slate-300 hover:text-indigo-300"
+          >
+            {user?.name} · <span className="text-slate-500">{user?.role}</span>
+          </Link>
           <Button variant="outline" onClick={handleLogout}>
             Log out
           </Button>

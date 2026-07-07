@@ -16,6 +16,7 @@ import * as leagues from "./leagues.controller.js";
 import * as seasons from "../seasons/seasons.controller.js";
 import * as players from "../players/players.controller.js";
 import * as franchises from "../franchises/franchises.controller.js";
+import * as auctions from "../auctions/auctions.controller.js";
 
 const router = Router();
 router.use(authenticate);
@@ -70,6 +71,13 @@ router.post(
   ownLeague("leagueId"),
   uploadImage,
   asyncHandler(franchises.uploadFranchiseLogo),
+);
+
+// All auctions across the league's seasons (template picker for cloning)
+router.get(
+  "/:leagueId/auctions",
+  ownLeague("leagueId"),
+  asyncHandler(auctions.listLeagueAuctions),
 );
 
 // Per-league player ban status

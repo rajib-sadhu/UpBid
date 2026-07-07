@@ -18,3 +18,24 @@ export const createUserSchema = z.object({
 // a user can own.
 export const createOrganizerSchema = createUserSchema;
 export const createFranchiseUserSchema = createUserSchema;
+// First-login (or post-reset) forced password change: the account holder proves
+// the provisioned password, then replaces it with one of their own.
+export const changePasswordSchema = z
+    .object({
+    currentPassword: z.string().min(1, "Current password is required"),
+    newPassword: z.string().min(8, "Password must be at least 8 characters"),
+})
+    .refine((v) => v.currentPassword !== v.newPassword, {
+    message: "New password must be different from the current one",
+    path: ["newPassword"],
+});
+// Creator (organizer/admin) resets a child account's password → the account
+// must change it again on its next login.
+export const resetPasswordSchema = z.object({
+    password: z.string().min(8, "Password must be at least 8 characters"),
+});
+// Self-service profile edit — name only. Email is the login identity and is
+// immutable; passwords go through changePasswordSchema.
+export const updateProfileSchema = z.object({
+    name: z.string().trim().min(1, "Name is required"),
+});

@@ -9,6 +9,7 @@ export function toPublicUser(u: User): PublicUser {
     name: u.name,
     role: u.role,
     status: u.status,
+    mustChangePassword: u.mustChangePassword,
     createdById: u.createdById,
     createdAt: u.createdAt.toISOString(),
   };

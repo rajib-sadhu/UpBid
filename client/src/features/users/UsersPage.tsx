@@ -52,6 +52,31 @@ export function UsersPage() {
     }
   }
 
+  // Inline per-row password reset: the holder must change it again on login.
+  const [resetTarget, setResetTarget] = useState<string | null>(null);
+  const [resetValue, setResetValue] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+
+  async function submitReset(u: PublicUser) {
+    setServerError(null);
+    setSuccess(null);
+    setResetBusy(true);
+    try {
+      await apiFetch(`/api/users/${u.id}/reset-password`, {
+        method: "POST",
+        body: JSON.stringify({ password: resetValue }),
+      });
+      setResetTarget(null);
+      setResetValue("");
+      await load();
+      setSuccess(`Password reset for ${u.email} — they must change it on next login`);
+    } catch (e) {
+      setServerError(e instanceof ApiClientError ? e.message : "Failed to reset the password");
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
   return (
     <div className="grid gap-6 md:grid-cols-[20rem_1fr]">
       <Card className="h-fit">
@@ -93,6 +118,7 @@ export function UsersPage() {
               <th className="pb-2 font-medium">Email</th>
               <th className="pb-2 font-medium">Role</th>
               <th className="pb-2 font-medium">Status</th>
+              <th className="pb-2 font-medium"></th>
             </tr>
           </thead>
           <tbody>
@@ -101,12 +127,65 @@ export function UsersPage() {
                 <td className="py-2">{u.name}</td>
                 <td className="py-2 text-slate-300">{u.email}</td>
                 <td className="py-2 text-slate-400">{u.role}</td>
-                <td className="py-2 text-slate-400">{u.status}</td>
+                <td className="py-2 text-slate-400">
+                  {u.status}
+                  {u.mustChangePassword && (
+                    <span
+                      className="ml-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-400"
+                      title="Signs in with a password someone else set — must change it on next login"
+                    >
+                      pwd pending
+                    </span>
+                  )}
+                </td>
+                <td className="py-2 text-right">
+                  {u.id !== user?.id &&
+                    (resetTarget === u.id ? (
+                      <span className="flex items-center justify-end gap-1.5">
+                        <PasswordInput
+                          autoComplete="new-password"
+                          placeholder="New password"
+                          className="h-7 w-40 text-xs"
+                          value={resetValue}
+                          onChange={(e) => setResetValue(e.target.value)}
+                        />
+                        <Button
+                          className="px-2 py-1 text-xs"
+                          disabled={resetBusy || resetValue.length < 8}
+                          title={resetValue.length < 8 ? "At least 8 characters" : undefined}
+                          onClick={() => void submitReset(u)}
+                        >
+                          {resetBusy ? "…" : "Set"}
+                        </Button>
+                        <button
+                          type="button"
+                          className="text-xs text-slate-400 hover:text-slate-200"
+                          onClick={() => {
+                            setResetTarget(null);
+                            setResetValue("");
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="text-xs text-indigo-400 hover:text-indigo-300"
+                        onClick={() => {
+                          setResetTarget(u.id);
+                          setResetValue("");
+                        }}
+                      >
+                        Reset password
+                      </button>
+                    ))}
+                </td>
               </tr>
             ))}
             {users.length === 0 && (
               <tr>
-                <td colSpan={4} className="py-4 text-center text-slate-500">
+                <td colSpan={5} className="py-4 text-center text-slate-500">
                   No users yet.
                 </td>
               </tr>

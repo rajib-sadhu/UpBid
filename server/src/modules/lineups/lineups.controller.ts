@@ -17,7 +17,9 @@ import {
 
 // Squad rows joined with the data the validator + mappers need.
 const squadInclude = {
-  player: { select: { id: true, name: true, footballPosition: true } },
+  player: {
+    select: { id: true, name: true, footballPosition: true, cricketRole: true, bowlingStyle: true },
+  },
   auctionPlayer: { select: { isOverseas: true } },
 } satisfies Prisma.TeamPlayerInclude;
 
@@ -113,7 +115,18 @@ export async function getLineup(req: Request, res: Response): Promise<void> {
     rules.editableAfterLockByOwner,
     user,
   );
-  if (!access.canView) throw Errors.forbidden();
+  if (!access.canView) {
+    // Peer visibility: a franchise with a team in the SAME auction may view a
+    // rival's lineup once it is LOCKED (never a draft — no copying plans).
+    const isPeer =
+      user.role === "FRANCHISE" &&
+      lineup?.status === "LOCKED" &&
+      (await prisma.team.findFirst({
+        where: { auctionId: ctx.auctionId, franchise: { ownerUserId: user.id } },
+        select: { id: true },
+      })) !== null;
+    if (!isPeer) throw Errors.forbidden();
+  }
 
   const allowedIds = allowed.map((a) => a.formationId);
   const fInfo = await formationInfo(lineup?.formationId ?? null, allowedIds);
@@ -150,6 +163,13 @@ export async function saveLineup(req: Request, res: Response): Promise<void> {
   const user = req.user!;
   const body = req.body as SaveLineupInput;
   const ctx = await loadTeamContext(teamId);
+  // Identity first: only the team's owner or the organizer may ever save —
+  // answer a rival with 403 before leaking any auction-state detail.
+  const mayTouch =
+    user.role === "SUPER_ADMIN" ||
+    (user.role === "ORGANIZER" && user.id === ctx.organizerId) ||
+    (user.role === "FRANCHISE" && user.id === ctx.ownerUserId);
+  if (!mayTouch) throw Errors.forbidden();
   if (ctx.auctionStatus !== "COMPLETED") {
     throw Errors.invalidState("Lineups can be built only after the auction is completed");
   }
@@ -188,6 +208,28 @@ export async function saveLineup(req: Request, res: Response): Promise<void> {
   const allowedIds = allowed.map((a) => a.formationId);
   const fInfo = await formationInfo(formationId, allowedIds);
 
+  // Complete-or-nothing: an incomplete lineup (missing starters, unassigned
+  // required roles, …) is rejected BEFORE anything is persisted — the same
+  // zero-violation bar as locking, for every role including the organizer.
+  const violations = validateLineup(
+    buildValidatorContext({
+      sport: ctx.sport,
+      rules,
+      formation: fInfo.formation,
+      formationAllowed: fInfo.allowed,
+      members: body.members.map(memberLikeFromInput),
+      squad: squadMap,
+    }),
+  );
+  if (violations.length) {
+    throw new AppError(
+      "INCOMPLETE_LINEUP",
+      "Complete the lineup before saving — fill the starting lineup and assign every required role",
+      409,
+      violations,
+    );
+  }
+
   try {
     await prisma.$transaction(async (tx) => {
       const lineup = await tx.lineup.upsert({
@@ -220,21 +262,10 @@ export async function saveLineup(req: Request, res: Response): Promise<void> {
     throw e;
   }
 
-  const violations = validateLineup(
-    buildValidatorContext({
-      sport: ctx.sport,
-      rules,
-      formation: fInfo.formation,
-      formationAllowed: fInfo.allowed,
-      members: body.members.map(memberLikeFromInput),
-      squad: squadMap,
-    }),
-  );
-
   const lineup = await loadLineup(teamId);
   const response: SaveLineupResponse = {
     lineup: toLineupDTO(ctx.teamId, ctx.teamName, lineup),
-    violations,
+    violations: [], // a save only succeeds with zero violations
   };
   res.json(response);
 }

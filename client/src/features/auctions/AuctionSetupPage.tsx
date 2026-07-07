@@ -113,7 +113,7 @@ export function AuctionSetupPage() {
         <div className="mt-1 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold">{detail.name}</h1>
           <span className={`rounded px-2 py-0.5 text-xs ${STATUS_STYLES[detail.status] ?? ""}`}>
-            {detail.status}
+            {detail.status === "RE_AUCTION" ? "UNSOLD AUCTION" : detail.status}
           </span>
           <span className="text-sm text-slate-500">{detail.sport}</span>
         </div>

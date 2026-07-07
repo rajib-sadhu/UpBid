@@ -10,7 +10,7 @@ import type { AuthUser } from "../auth/types.js";
 import { prisma } from "../lib/prisma.js";
 import { AppError, Errors } from "../lib/errors.js";
 import { money, moneyToWire, eq, type Money } from "../lib/money.js";
-import { canAcceptBid, requiredNextBid } from "./reserve.js";
+import { canAcceptBid, requiredNextBid, openingPrice } from "./reserve.js";
 import { toIncrementTiers, toTeamTally } from "../realtime/mappers.js";
 import * as timer from "../realtime/timer.js";
 
@@ -115,7 +115,8 @@ export async function placeBotBid(args: {
   if (!team || team.auctionId !== args.auctionId) throw Errors.notFound("Team not found");
 
   const tiers = toIncrementTiers(auction.incrementTiers);
-  const amount = requiredNextBid(lot.currentPrice ?? null, lot.basePrice, tiers);
+  const opening = openingPrice(lot.round, lot.basePrice, auction.rules.unsoldPrice);
+  const amount = requiredNextBid(lot.currentPrice ?? null, opening, tiers);
   return placeBidCore({
     auction,
     lot,
@@ -166,8 +167,10 @@ async function placeBidCore(input: {
   });
   if (dup) reject("DUPLICATE_BID", "Duplicate bid ignored");
 
-  // 4) Amount correctness — exact base price or current + required increment.
-  const required = requiredNextBid(lot.currentPrice ?? null, lot.basePrice, tiers);
+  // 4) Amount correctness — exact opening price (base, or unsold price in the
+  // re-auction round) for the first bid, otherwise current + required increment.
+  const opening = openingPrice(lot.round, lot.basePrice, rules.unsoldPrice);
+  const required = requiredNextBid(lot.currentPrice ?? null, opening, tiers);
   if (!eq(amount, required)) {
     reject("BAD_AMOUNT", `Bid must be exactly ${moneyToWire(required)}`);
   }
@@ -211,7 +214,7 @@ async function placeBidCore(input: {
   });
 
   // No anti-snipe: endsAt is unchanged. Tallies unchanged → maxBid unchanged.
-  const nextRequired = requiredNextBid(amount, lot.basePrice, tiers);
+  const nextRequired = requiredNextBid(amount, opening, tiers);
   return {
     auctionPlayerId: lot.id,
     currentPrice: moneyToWire(amount),

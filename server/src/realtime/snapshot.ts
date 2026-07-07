@@ -4,6 +4,7 @@ import { Errors } from "../lib/errors.js";
 import { moneyToWire } from "../lib/money.js";
 import { currentSeq } from "./broadcast.js";
 import { resolveInfo } from "./timer.js";
+import { assignmentState } from "../services/assignment.js";
 import {
   toIncrementTiers,
   toSnapshotTeam,
@@ -46,9 +47,15 @@ export async function buildStateSnapshot(auctionId: string): Promise<StateSnapsh
 
   const tiers = toIncrementTiers(auction.incrementTiers);
   const timerInfo = resolveInfo(auction);
-  const currentLot = auction.currentAuctionPlayer
-    ? toCurrentLot(auction.currentAuctionPlayer as LotWithPlayer, tiers, timerInfo)
-    : null;
+  const currentLot =
+    auction.currentAuctionPlayer && auction.rules
+      ? toCurrentLot(
+          auction.currentAuctionPlayer as LotWithPlayer,
+          tiers,
+          timerInfo,
+          auction.rules.unsoldPrice,
+        )
+      : null;
 
   return {
     seq: currentSeq(auctionId),
@@ -80,6 +87,7 @@ export async function buildStateSnapshot(auctionId: string): Promise<StateSnapsh
       counts: toLotCounts(grouped.map((g) => ({ status: g.status, _count: g._count }))),
       items: (lotRows as LotWithPlayer[]).map(toLiveLot),
     },
+    assignment: auction.status === "ASSIGNMENT" ? await assignmentState(auctionId) : null,
     serverTime: new Date().toISOString(),
   };
 }

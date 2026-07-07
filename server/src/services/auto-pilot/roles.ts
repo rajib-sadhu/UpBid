@@ -175,6 +175,26 @@ export const SQUAD_ROLES: SquadRoleKey[] = [
   "ALL_ROUNDER",
 ];
 
+/** Extra players of one role a team may hold beyond its target while other
+ * roles are still short (the soft balance cap). */
+export const DEPTH_MARGIN = 2;
+
+/**
+ * Soft per-role depth cap: true when EVERY bucket this player fills already has
+ * target + DEPTH_MARGIN members. The engine zeroes the valuation when this
+ * holds while any role is still short — so a team can lean batting-heavy, but
+ * can't hoard 8 batsmen while it still lacks a spinner.
+ */
+export function roleCapExceeded(
+  p: CricketAttrs,
+  counts: SquadCounts,
+  targets: SquadTargets,
+): boolean {
+  const roles = playerRoles(p);
+  if (roles.length === 0) return false;
+  return roles.every((r) => counts[ROLE_COUNT[r]] >= targets[ROLE_TARGET[r]] + DEPTH_MARGIN);
+}
+
 /** Build the per-role required/got/short report lines for one team. */
 export function roleReport(counts: SquadCounts, targets: SquadTargets): SquadRoleReport[] {
   return SQUAD_ROLES.map((role) => {

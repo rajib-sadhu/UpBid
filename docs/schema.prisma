@@ -142,8 +142,11 @@ model User {
   email        String     @unique
   name         String
   passwordHash String? // null until an invited user sets their password
-  role         Role
-  status       UserStatus @default(INVITED)
+  // True whenever someone else set the password (provisioning or a creator
+  // reset) — the next login must change it before using the app.
+  mustChangePassword Boolean    @default(false)
+  role               Role
+  status             UserStatus @default(INVITED)
   inviteToken  String?    @unique
   invitedAt    DateTime?
   activatedAt  DateTime?

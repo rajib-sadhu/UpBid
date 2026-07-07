@@ -5,6 +5,7 @@ import {
   roleNeeds,
   needScore,
   reserveSlotCount,
+  roleCapExceeded,
   roleReport,
   type CricketAttrs,
   type SquadTargets,
@@ -128,6 +129,30 @@ describe("reserveSlotCount", () => {
     // bat1 but open3 → 2 surplus openers need their own slots.
     const t: SquadTargets = { ...allZero, minBatsmen: 1, minOpeners: 3 };
     expect(reserveSlotCount(roleNeeds(squadCounts([]), t))).toBe(1 + 2);
+  });
+});
+
+describe("roleCapExceeded", () => {
+  const bat = p({ cricketRole: "BATSMAN", battingPosition: "MIDDLE" });
+
+  it("caps a role at target + 2", () => {
+    // minBatsmen 3 → cap 5. Four batsmen: not capped; five: capped.
+    const four = squadCounts(Array.from({ length: 4 }, () => bat));
+    const five = squadCounts(Array.from({ length: 5 }, () => bat));
+    expect(roleCapExceeded(bat, four, targets)).toBe(false);
+    expect(roleCapExceeded(bat, five, targets)).toBe(true);
+  });
+
+  it("is not capped when ANY of the player's buckets still has room", () => {
+    // Five middle-order batsmen (batsmen capped) but zero openers — a
+    // batsman-opener still passes because the OPENER bucket has room.
+    const counts = squadCounts(Array.from({ length: 5 }, () => bat));
+    const opener = p({ cricketRole: "BATSMAN", battingPosition: "OPENER" });
+    expect(roleCapExceeded(opener, counts, targets)).toBe(false);
+  });
+
+  it("never caps a player with no cricket buckets", () => {
+    expect(roleCapExceeded(p({}), squadCounts([]), targets)).toBe(false);
   });
 });
 

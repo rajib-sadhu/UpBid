@@ -10,12 +10,15 @@ export type LotStatus = (typeof LOT_STATUSES)[number];
 export declare const createAuctionSchema: z.ZodObject<{
     name: z.ZodString;
     biddingMode: z.ZodDefault<z.ZodEnum<["ORGANIZER", "FRANCHISE"]>>;
+    cloneFromAuctionId: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     name: string;
     biddingMode: "ORGANIZER" | "FRANCHISE";
+    cloneFromAuctionId?: string | undefined;
 }, {
     name: string;
     biddingMode?: "ORGANIZER" | "FRANCHISE" | undefined;
+    cloneFromAuctionId?: string | undefined;
 }>;
 export type CreateAuctionInput = z.infer<typeof createAuctionSchema>;
 export declare const updateAuctionSchema: z.ZodObject<{

@@ -16,6 +16,7 @@ import { Select } from "../../components/ui/select.js";
 import { Card } from "../../components/ui/card.js";
 import { Modal } from "../../components/ui/modal.js";
 import { Flag } from "../../components/ui/flag.js";
+import { CricketRoleIcon } from "../../components/ui/role-icon.js";
 import { PlayerForm } from "./PlayerForm.js";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
@@ -175,7 +176,16 @@ export function ViewPlayersPage() {
         {
           key: "cricketRole",
           label: "Role",
-          render: (p) => (p.cricketRole ? CRICKET_ROLE_LABELS[p.cricketRole] : "—"),
+          render: (p) =>
+            p.cricketRole ? (
+              <CricketRoleIcon
+                cricketRole={p.cricketRole}
+                bowlingStyle={p.bowlingStyle}
+                className="h-4 w-4"
+              />
+            ) : (
+              "—"
+            ),
         },
         {
           key: "battingPosition",

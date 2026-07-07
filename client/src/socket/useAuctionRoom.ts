@@ -16,10 +16,12 @@ import {
   type LotSoldEvent,
   type LotUnsoldEvent,
   type PlayerAssignedEvent,
+  type AssignTurnEvent,
   type TimerPausedEvent,
   type TimerResumedEvent,
   type PhaseChangedEvent,
   type AutoFinishedEvent,
+  type PresenceEvent,
   type SocketErrorEvent,
 } from "shared";
 import { getSocket } from "./socket.js";
@@ -34,6 +36,11 @@ export interface AuctionRoom {
   lastError: SocketErrorEvent | null;
   /** The best-effort squad report emitted when an auto-pilot run finishes. */
   autoReport: AutoFinishedEvent | null;
+  /**
+   * Connection report (organizer/admin sockets only; null for everyone else):
+   * userId → round-trip ms (null = connected, unmeasured); absent = offline.
+   */
+  presence: Record<string, number | null> | null;
   // Actions (organizer / franchise depending on role + mode; server re-checks).
   placeBid: (lot: CurrentLot, teamId: string) => void;
   undoLastBid: () => void;
@@ -48,7 +55,10 @@ export interface AuctionRoom {
   resume: () => void;
   advancePhase: (to: PhaseTarget) => void;
   assignPlayer: (auctionPlayerId: string, teamId: string) => void;
+  /** Organizer: toggle a team out of / back into the assignment pick rotation. */
+  skipAssignTurn: (teamId: string) => void;
   startAutoPilot: () => void;
+  stopAutoPilot: () => void;
   suspendAuction: () => void;
   resumeAuction: () => void;
   cancelAuction: () => void;
@@ -91,6 +101,7 @@ export function useAuctionRoom(auctionId: string | undefined): AuctionRoom {
   const [lastReject, setLastReject] = useState<BidRejectedEvent | null>(null);
   const [lastError, setLastError] = useState<SocketErrorEvent | null>(null);
   const [autoReport, setAutoReport] = useState<AutoFinishedEvent | null>(null);
+  const [presence, setPresence] = useState<Record<string, number | null> | null>(null);
   const seqRef = useRef(0);
 
   const join = useCallback(() => {
@@ -172,8 +183,11 @@ export function useAuctionRoom(auctionId: string | undefined): AuctionRoom {
             ...s,
             teams: applyTally(s.teams, ev.team),
             lots: { counts: ev.lotCounts, items },
+            assignment: ev.assignment,
           };
         }),
+      [SERVER_EVENTS.ASSIGN_TURN]: (ev: AssignTurnEvent) =>
+        onDelta(ev, (s) => ({ ...s, assignment: ev.assignment })),
       [SERVER_EVENTS.TIMER_PAUSED]: (ev: TimerPausedEvent) =>
         onDelta(ev, (s) => ({
           ...s,
@@ -192,10 +206,16 @@ export function useAuctionRoom(auctionId: string | undefined): AuctionRoom {
         onDelta(ev, (s) => ({
           ...s,
           auction: { ...s.auction, status: ev.status, round: ev.round },
+          assignment: ev.assignment,
         })),
       // Terminal info, not a state delta — just stash the report. The snapshot
       // that follows resets seqRef and lifts the view-only lock.
       [SERVER_EVENTS.AUTO_FINISHED]: (ev: AutoFinishedEvent) => setAutoReport(ev),
+      // Manual stop: no report to show; the follow-up snapshot flips autoPilot
+      // off and manual controls come back on their own.
+      [SERVER_EVENTS.AUTO_STOPPED]: () => setAutoReport(null),
+      // Display-only side channel (no seq); only organizer sockets receive it.
+      [SERVER_EVENTS.PRESENCE]: (ev: PresenceEvent) => setPresence(ev.users),
       [SERVER_EVENTS.ERROR]: (ev: SocketErrorEvent) => setLastError(ev),
     };
 
@@ -257,6 +277,7 @@ export function useAuctionRoom(auctionId: string | undefined): AuctionRoom {
     lastReject,
     lastError,
     autoReport,
+    presence,
     placeBid,
     undoLastBid: () => {
       if (auctionId) {
@@ -281,12 +302,14 @@ export function useAuctionRoom(auctionId: string | undefined): AuctionRoom {
     advancePhase: (to) => auctionId && emit(CLIENT_EVENTS.PHASE_ADVANCE, { auctionId, to }),
     assignPlayer: (auctionPlayerId, teamId) =>
       auctionId && emit(CLIENT_EVENTS.ASSIGN_PLAYER, { auctionId, auctionPlayerId, teamId }),
+    skipAssignTurn: (teamId) => auctionId && emit(CLIENT_EVENTS.ASSIGN_SKIP, { auctionId, teamId }),
     startAutoPilot: () => {
       if (auctionId) {
         setAutoReport(null);
         emit(CLIENT_EVENTS.AUTO_START, { auctionId });
       }
     },
+    stopAutoPilot: () => auctionId && emit(CLIENT_EVENTS.AUTO_STOP, { auctionId }),
     suspendAuction: () => auctionId && emit(CLIENT_EVENTS.AUCTION_SUSPEND, { auctionId }),
     resumeAuction: () => auctionId && emit(CLIENT_EVENTS.AUCTION_RESUME, { auctionId }),
     cancelAuction: () => auctionId && emit(CLIENT_EVENTS.AUCTION_CANCEL, { auctionId }),

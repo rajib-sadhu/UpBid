@@ -12,6 +12,7 @@ import { prisma } from "../../lib/prisma.js";
 import { Errors } from "../../lib/errors.js";
 import { money, moneyToWire } from "../../lib/money.js";
 import { canViewAuction, auctionOwnerId } from "../../realtime/authz.js";
+import { presenceForAuction } from "../../realtime/presence.js";
 import { summarizeTeam } from "./monitor.service.js";
 
 // Default reserve figures if an auction somehow lacks a rules row (shouldn't
@@ -31,6 +32,7 @@ const teamInclude = {
           role: true,
           footballPosition: true,
           cricketRole: true,
+          bowlingStyle: true,
         },
       },
       auctionPlayer: { select: { isOverseas: true } },
@@ -115,6 +117,8 @@ export async function getAuctionMonitor(req: Request, res: Response): Promise<vo
         photoUrl: tp.player.photoUrl,
         // Cricket players carry a structured role; fall back to its label.
         role: tp.player.role ?? (tp.player.cricketRole ? CRICKET_ROLE_LABELS[tp.player.cricketRole] : null),
+        cricketRole: tp.player.cricketRole,
+        bowlingStyle: tp.player.bowlingStyle,
         footballPosition: tp.player.footballPosition,
         isOverseas: tp.auctionPlayer.isOverseas,
         price: moneyToWire(money(tp.price)),
@@ -147,6 +151,7 @@ export async function getAuctionMonitor(req: Request, res: Response): Promise<vo
     progress,
     teams,
     canManage,
+    ...(canManage ? { presence: presenceForAuction(id) } : {}),
   };
   res.json(data);
 }

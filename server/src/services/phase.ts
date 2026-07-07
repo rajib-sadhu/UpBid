@@ -2,6 +2,7 @@ import type { PhaseChangedEvent, PhaseTarget } from "shared";
 import { prisma } from "../lib/prisma.js";
 import { Errors, AppError } from "../lib/errors.js";
 import * as timer from "../realtime/timer.js";
+import { assignmentState, clearAssignSkips } from "./assignment.js";
 
 /**
  * Organizer-driven auction state-machine transitions (architecture.md §9):
@@ -24,13 +25,22 @@ export async function advancePhase(
   }
 
   if (to === "RE_AUCTION") {
-    if (auction.status !== "LIVE") {
-      throw Errors.invalidState("Re-auction can only start from the live main round");
+    // The "unsold auction": every player not yet won — marked unsold OR never
+    // even opened — is swept into the unsold round in one go, where bidding
+    // restarts from the auction's unsold price. Chainable: a further unsold
+    // auction can be started from an unsold round that still has leftovers.
+    if (auction.status !== "LIVE" && auction.status !== "RE_AUCTION") {
+      throw Errors.invalidState("The unsold auction can only start from a live round");
+    }
+    const remaining = await prisma.auctionPlayer.count({
+      where: { auctionId, status: { in: ["PENDING", "UNSOLD"] } },
+    });
+    if (remaining === 0) {
+      throw Errors.invalidState("No unsold players remain — advance to assignment instead");
     }
     await prisma.$transaction([
-      // Reset main-round unsold lots in place for the re-auction round.
       prisma.auctionPlayer.updateMany({
-        where: { auctionId, status: "UNSOLD", round: "MAIN" },
+        where: { auctionId, status: { in: ["PENDING", "UNSOLD"] } },
         data: { status: "PENDING", round: "RE_AUCTION", currentPrice: null, leadingTeamId: null },
       }),
       prisma.auction.update({
@@ -64,15 +74,73 @@ export async function advancePhase(
         409,
       );
     }
-    await prisma.auction.update({ where: { id: auctionId }, data: { status: "COMPLETED" } });
+    // Ending the auction: any player still waiting (never opened, this round or
+    // a previous one) is recorded as UNSOLD for this auction — the auction
+    // closes with every lot in a terminal state.
+    await prisma.$transaction([
+      prisma.auctionPlayer.updateMany({
+        where: { auctionId, status: "PENDING" },
+        data: { status: "UNSOLD", currentPrice: null, leadingTeamId: null },
+      }),
+      prisma.auction.update({ where: { id: auctionId }, data: { status: "COMPLETED" } }),
+    ]);
   }
 
   timer.stop(auctionId);
+  clearAssignSkips(auctionId); // every transition starts the rotation fresh
   const updated = await prisma.auction.findUniqueOrThrow({
     where: { id: auctionId },
     select: { status: true, round: true },
   });
-  return { status: updated.status, round: updated.round };
+  return {
+    status: updated.status,
+    round: updated.round,
+    assignment: updated.status === "ASSIGNMENT" ? await assignmentState(auctionId) : null,
+  };
+}
+
+/**
+ * One live auction per season: force-suspend every OTHER auction of the season
+ * that is currently running (any status a resume can recover from). A lot left
+ * on the block is put back to PENDING so a resume re-enters cleanly between
+ * lots. Returns the suspended auction ids so the caller can rebroadcast their
+ * snapshots. Used by go-live.
+ */
+export async function suspendSeasonRivals(
+  seasonId: string,
+  exceptAuctionId: string,
+): Promise<string[]> {
+  const rivals = await prisma.auction.findMany({
+    where: {
+      seasonId,
+      id: { not: exceptAuctionId },
+      status: { in: ["LIVE", "PAUSED", "RE_AUCTION", "ASSIGNMENT"] },
+    },
+    select: { id: true, currentAuctionPlayerId: true },
+  });
+  for (const rival of rivals) {
+    await prisma.$transaction([
+      ...(rival.currentAuctionPlayerId
+        ? [
+            prisma.auctionPlayer.update({
+              where: { id: rival.currentAuctionPlayerId },
+              data: { status: "PENDING", currentPrice: null, leadingTeamId: null },
+            }),
+          ]
+        : []),
+      prisma.auction.update({
+        where: { id: rival.id },
+        data: {
+          status: "SUSPENDED",
+          currentAuctionPlayerId: null,
+          currentLotEndsAt: null,
+          autoPilot: false,
+        },
+      }),
+    ]);
+    timer.stop(rival.id);
+  }
+  return rivals.map((r) => r.id);
 }
 
 /**
