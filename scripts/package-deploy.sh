@@ -24,6 +24,18 @@ mkdir -p "$APP"
 # Workspace skeleton + lockfile (npm ci on the server needs all of these).
 cp package.json package-lock.json "$APP/"
 
+# Hosting platforms with auto-build pipelines run `npm run build` and `npm
+# start` on the uploaded code. The package is already built — make build a
+# no-op and point start at the server entry (works from the app root).
+node -e "
+const fs = require('fs');
+const p = '$APP/package.json';
+const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+j.scripts.build = 'echo \"prebuilt deploy package — nothing to build\"';
+j.scripts.start = 'node server/dist/index.js';
+fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+"
+
 mkdir -p "$APP/shared" "$APP/client" "$APP/server" "$APP/uploads" "$APP/deploy" "$APP/docs"
 cp shared/package.json "$APP/shared/" && cp -r shared/dist "$APP/shared/dist"
 cp client/package.json "$APP/client/" && cp -r client/dist "$APP/client/dist"

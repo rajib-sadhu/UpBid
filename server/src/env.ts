@@ -1,5 +1,6 @@
 import { config } from "dotenv";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 // Load the repo-root .env. In dev the server runs with cwd = ./server (so the
@@ -54,6 +55,9 @@ export const env = {
   jwtSecret: e.JWT_SECRET,
   jwtExpiresIn: e.JWT_EXPIRES_IN,
   pepper: e.PEPPER,
-  // Absolute path to the upload dir (relative to the server cwd = ./server).
-  uploadDir: resolve(process.cwd(), e.UPLOAD_DIR),
+  // Absolute path to the upload dir. Resolved against the server package dir
+  // (this file lives in server/src or server/dist) rather than process.cwd(),
+  // so the default "../uploads" = <app-root>/uploads no matter which directory
+  // the host launches Node from (npm start at the root, systemd, Passenger…).
+  uploadDir: resolve(dirname(fileURLToPath(import.meta.url)), "..", e.UPLOAD_DIR),
 } as const;
