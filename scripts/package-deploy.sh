@@ -48,6 +48,7 @@ cp server/tsconfig.json "$APP/server/" 2>/dev/null || true
 cp deploy/env.production.example "$APP/deploy/"
 cp deploy/auction-app.service "$APP/deploy/"
 cp deploy/nginx.conf.example "$APP/deploy/"
+cp deploy/htaccess.hostinger.example "$APP/deploy/"
 cp docs/deploy.md "$APP/docs/"
 touch "$APP/uploads/.keep"
 

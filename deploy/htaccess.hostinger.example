@@ -1,0 +1,10 @@
+# LiteSpeed/Passenger app registration — THE mechanism that serves the Node app
+# on Hostinger shared hosting (no hPanel Node.js flow needed). Place as
+# `.htaccess` in the app root (public_html) and adjust the two paths.
+# The first request after creation spawns the app; Passenger keeps it alive.
+# Restart later with:  mkdir -p tmp && touch tmp/restart.txt
+PassengerAppRoot "/home/u237355130/domains/auction.rsdev.in/public_html"
+PassengerBaseURI "/"
+PassengerNodejs "/opt/alt/alt-nodejs20/root/usr/bin/node"
+PassengerAppType node
+PassengerStartupFile server/dist/index.js

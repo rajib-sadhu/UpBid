@@ -30,15 +30,22 @@ real build would fail (no TS sources in the package). Don't hand-edit that.
 
 ## 2. Upload
 
-Upload the zip through hPanel's Node.js website deployment for
-`auction.rsdev.in`. The pipeline extracts to
-`public_html/.builds/source/auction-app/`, installs, "builds" (no-op), and the
-app files end up in `public_html/` (`server/`, `client/`, `shared/`,
-`deploy/`, `docs/`, `uploads/`, `package.json`, `package-lock.json`).
+Upload the zip (hPanel File Manager or the Node.js deployment screen) and
+extract so the app files sit directly in `public_html/` (`server/`, `client/`,
+`shared/`, `deploy/`, `docs/`, `uploads/`, `package.json`,
+`package-lock.json`).
 
-Startup command in the panel: **`npm start`** (or entry file
-`server/dist/index.js`). **Exactly 1 instance** — in-memory lot timers; two
-instances corrupt live auctions.
+**How the app actually runs (what worked): LiteSpeed Passenger via
+`.htaccess`** — no hPanel Node.js configuration needed. Copy
+`deploy/htaccess.hostinger.example` to `public_html/.htaccess` (paths already
+match this account). The first request spawns the app; Passenger keeps it
+alive, respawns on crash, and survives server reboots.
+
+- Restart the app: `mkdir -p tmp && touch tmp/restart.txt` (next request
+  restarts it).
+- **Exactly 1 instance** — in-memory lot timers; two instances corrupt live
+  auctions. Verify with `ps aux | grep "server/dist"` (expect one process),
+  especially during the first live auction.
 
 ## 3. SSH setup (first deploy only)
 
@@ -108,8 +115,10 @@ back to HTTP long-polling automatically — live auctions still work.
 1. Build a fresh zip (`./scripts/package-deploy.sh`), upload via the same
    pipeline.
 2. **Keep `.env` and `uploads/`** — never overwrite or delete them.
-3. SSH: `npm ci --omit=dev` → `npm run prisma:deploy -w server` → restart from
-   hPanel. (No re-seed.)
+3. SSH: `npm ci --omit=dev` → `npm run prisma:deploy -w server` →
+   `mkdir -p tmp && touch tmp/restart.txt` to restart. (No re-seed. Also keep
+   `.htaccess` — re-copy from `deploy/htaccess.hostinger.example` if the upload
+   replaced it.)
 
 ## Gotchas hit on the first deploy (all fixed in the package)
 
@@ -119,6 +128,9 @@ back to HTTP long-polling automatically — live auctions still work.
 - DB password contained `@` → URL-encode it in `DATABASE_URL`.
 - `.env` lookup and the uploads path used to depend on the launch directory →
   the server now resolves both robustly (app root or `server/`).
+- The hPanel Node.js deploy pipeline and its `.builds/` flow turned out to be
+  unnecessary — the domain never routed to the app that way. The working
+  mechanism is the Passenger `.htaccess` above, pure SSH.
 - **Prisma's Rust engines (both "library" and "binary") panic on CloudLinux**
   with `PANIC: timer has gone away` — the host's LVE thread limits kill the
   tokio runtime. Permanent fix (in the codebase since 2026-07-08): the client
