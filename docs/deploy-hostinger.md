@@ -75,6 +75,7 @@ JWT_EXPIRES_IN=7d
 UPLOAD_DIR=../uploads
 SEED_ADMIN_EMAIL=rajib@digineo.co.in
 SEED_ADMIN_PASSWORD=<strong password>
+PRISMA_CLIENT_ENGINE_TYPE=binary
 ```
 
 - **No `PORT` line** — the Hostinger pipeline injects its own.
@@ -119,6 +120,11 @@ back to HTTP long-polling automatically — live auctions still work.
 - DB password contained `@` → URL-encode it in `DATABASE_URL`.
 - `.env` lookup and the uploads path used to depend on the launch directory →
   the server now resolves both robustly (app root or `server/`).
+- Prisma's default in-process ("library") engine panics on CloudLinux with
+  `PANIC: timer has gone away` (LVE thread limits kill its timer thread) →
+  add `PRISMA_CLIENT_ENGINE_TYPE=binary` to `.env` and re-run
+  `npm run prisma:generate -w server` once to download the binary engine.
+  Applies to the seed AND the running app.
 
 ## Backups (set up before the first real auction)
 
