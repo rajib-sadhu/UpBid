@@ -99,8 +99,16 @@ export async function updatePlayer(req: Request, res: Response): Promise<void> {
 export async function deletePlayer(req: Request, res: Response): Promise<void> {
   const id = req.params.id;
   if (!id) throw Errors.notFound();
-  const entries = await prisma.auctionPlayer.count({ where: { playerId: id } });
+  const [entries, retentions] = await Promise.all([
+    prisma.auctionPlayer.count({ where: { playerId: id } }),
+    prisma.auctionRetention.count({ where: { playerId: id } }),
+  ]);
   if (entries > 0) throw Errors.conflict("Player is used in an auction and cannot be deleted");
+  if (retentions > 0) {
+    throw Errors.conflict(
+      "Player is retained in an auction being set up — remove the retention first",
+    );
+  }
   await prisma.playerLeagueStatus.deleteMany({ where: { playerId: id } });
   await prisma.player.delete({ where: { id } });
   res.status(204).end();

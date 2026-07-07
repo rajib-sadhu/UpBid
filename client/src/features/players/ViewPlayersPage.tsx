@@ -97,6 +97,21 @@ export function ViewPlayersPage() {
     setPage(1);
   }
 
+  async function deletePlayer(p: Player) {
+    if (!window.confirm(`Delete ${p.name}? This cannot be undone.`)) return;
+    setServerError(null);
+    setSuccess(null);
+    try {
+      await apiFetch(`/api/players/${p.id}`, { method: "DELETE" });
+      setSuccess(`Deleted ${p.name}.`);
+      // A now-empty last page should fall back to the previous one.
+      if (players.length === 1 && page > 1) setPage((n) => n - 1);
+      else await load();
+    } catch (e) {
+      setServerError(e instanceof ApiClientError ? e.message : "Failed to delete the player");
+    }
+  }
+
   async function uploadPhoto(playerId: string, file: File) {
     setServerError(null);
     try {
@@ -225,9 +240,18 @@ export function ViewPlayersPage() {
         key: null,
         label: "",
         render: (p) => (
-          <Button variant="outline" className="px-2 py-1 text-xs" onClick={() => setEditing(p)}>
-            Edit
-          </Button>
+          <div className="flex gap-1.5">
+            <Button variant="outline" className="px-2 py-1 text-xs" onClick={() => setEditing(p)}>
+              Edit
+            </Button>
+            <Button
+              variant="ghost"
+              className="px-2 py-1 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300"
+              onClick={() => void deletePlayer(p)}
+            >
+              Delete
+            </Button>
+          </div>
         ),
       },
     );
