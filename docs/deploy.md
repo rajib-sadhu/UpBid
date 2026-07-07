@@ -4,6 +4,9 @@ One Node process serves everything: the built React app, the `/api` REST
 routes, `/uploads` images, and the Socket.io live-auction gateway. It needs
 **Node 20+**, **MySQL 8**, and outbound network for `npm install`.
 
+> For the live production site there is a host-specific runbook with the exact
+> commands and gotchas: [deploy-hostinger.md](./deploy-hostinger.md).
+
 > ⚠️ **Run exactly ONE instance.** Lot timers and event sequencing live in
 > process memory — a second instance against the same database would corrupt
 > live auctions. (Vertical scaling is fine; horizontal is not, yet.)
