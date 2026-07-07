@@ -75,7 +75,6 @@ JWT_EXPIRES_IN=7d
 UPLOAD_DIR=../uploads
 SEED_ADMIN_EMAIL=rajib@digineo.co.in
 SEED_ADMIN_PASSWORD=<strong password>
-PRISMA_CLIENT_ENGINE_TYPE=binary
 ```
 
 - **No `PORT` line** — the Hostinger pipeline injects its own.
@@ -120,11 +119,14 @@ back to HTTP long-polling automatically — live auctions still work.
 - DB password contained `@` → URL-encode it in `DATABASE_URL`.
 - `.env` lookup and the uploads path used to depend on the launch directory →
   the server now resolves both robustly (app root or `server/`).
-- Prisma's default in-process ("library") engine panics on CloudLinux with
-  `PANIC: timer has gone away` (LVE thread limits kill its timer thread) →
-  add `PRISMA_CLIENT_ENGINE_TYPE=binary` to `.env` and re-run
-  `npm run prisma:generate -w server` once to download the binary engine.
-  Applies to the seed AND the running app.
+- **Prisma's Rust engines (both "library" and "binary") panic on CloudLinux**
+  with `PANIC: timer has gone away` — the host's LVE thread limits kill the
+  tokio runtime. Permanent fix (in the codebase since 2026-07-08): the client
+  runs Rust-engine-free (`previewFeatures = ["queryCompiler", "driverAdapters"]`
+  + `@prisma/adapter-mariadb`), pure JS/WASM. No `.env` workaround needed;
+  `PRISMA_CLIENT_ENGINE_TYPE` is ignored and can be removed. Note
+  `prisma migrate deploy` still uses the schema engine — that one works on
+  this host.
 
 ## Backups (set up before the first real auction)
 

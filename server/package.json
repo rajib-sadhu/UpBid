@@ -21,6 +21,7 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@prisma/adapter-mariadb": "^6.19.3",
     "@prisma/client": "^6.1.0",
     "@types/multer": "^2.1.0",
     "bcryptjs": "^2.4.3",

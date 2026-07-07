@@ -7,7 +7,10 @@
 // All monetary amounts are Decimal(14,2) in CRORE units (so 0.5 = 50 lakh).
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // Rust-engine-free client (WASM query compiler + JS driver adapter): shared
+  // hosts like CloudLinux kill the native engines ("timer has gone away").
+  previewFeatures = ["queryCompiler", "driverAdapters"]
 }
 
 datasource db {
