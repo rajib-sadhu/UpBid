@@ -1,0 +1,29 @@
+# Nginx reverse proxy for the auction app (VPS path). The app already sets
+# `trust proxy = 1`, so client IPs and rate limiting work behind this.
+# After installing: certbot --nginx -d auction.example.com  (adds the TLS block)
+
+server {
+    listen 80;
+    server_name auction.example.com;
+
+    # Uploaded images can be up to 2 MB; give headroom.
+    client_max_body_size 5m;
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+
+        # WebSocket upgrade — required for Socket.io's websocket transport.
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Live auctions hold long-lived connections.
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}

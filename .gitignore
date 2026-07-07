@@ -39,3 +39,4 @@ test-results/
 # vite cache
 .vite/
 node_modules/.vite/
+auction-app-deploy-*.zip

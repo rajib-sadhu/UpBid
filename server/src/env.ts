@@ -2,8 +2,12 @@ import { config } from "dotenv";
 import { resolve } from "node:path";
 import { z } from "zod";
 
-// Load the repo-root .env (server runs with cwd = ./server).
+// Load the repo-root .env. In dev the server runs with cwd = ./server (so the
+// root file is one level up); production hosts (systemd, Passenger) usually
+// launch from the app root itself — try both. dotenv never overrides vars that
+// are already set, so real environment variables always win.
 config({ path: resolve(process.cwd(), "../.env") });
+config({ path: resolve(process.cwd(), ".env") });
 
 const envSchema = z.object({
   NODE_ENV: z.string().default("development"),

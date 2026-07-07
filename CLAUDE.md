@@ -53,3 +53,4 @@ sides via `concurrently`.
 - `npm run test:integration` — DB-backed vitest suite (uses its own `<db>_itest` database).
 - `npm run test:e2e` — Playwright happy paths against the production single-server
   (builds all workspaces, seeds its own `<db>_e2e` database).
+- `./scripts/package-deploy.sh` — production deploy zip (see `docs/deploy.md`).

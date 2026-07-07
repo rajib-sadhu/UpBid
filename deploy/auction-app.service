@@ -1,0 +1,27 @@
+# systemd unit — for a VPS/dedicated server where you have root.
+# Install:
+#   sudo cp deploy/auction-app.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now auction-app
+# Logs:  journalctl -u auction-app -f
+[Unit]
+Description=Sports Auction Platform (Node single-server)
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+# Adjust user + path to your install location.
+User=www-data
+WorkingDirectory=/var/www/auction-app
+ExecStart=/usr/bin/node server/dist/index.js
+Restart=always
+RestartSec=3
+# The app reads .env from the working directory (or set Environment= lines here).
+Environment=NODE_ENV=production
+
+# The auction engine is single-instance by design (in-memory lot timers and
+# event sequencing) — never run more than one copy against the same database.
+
+[Install]
+WantedBy=multi-user.target

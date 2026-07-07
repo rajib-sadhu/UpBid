@@ -186,5 +186,24 @@ Schema change (flagged): `AuctionRetention` model, `Auction.retentionSourceAucti
       retention tests: source gating, read model, all rejection paths, go-live
       materialization, live-lock); architecture.md §4 + changelog updated.
 
+## Phase 10 — Build & deploy ✅ (awaiting review)
+No schema change. Production packaging + deployment docs.
+
+- [x] `scripts/package-deploy.sh` → self-contained `auction-app-deploy-*.zip`
+      (server/client/shared dist, prisma schema+migrations, server/src for the
+      seed, config samples, guide). SPA built with `VITE_API_URL=""` (same-origin).
+- [x] Prod-install fixes: `prisma` + `dotenv-cli` moved to runtime deps with a
+      `postinstall` prisma generate (engine built on the host); `db:seed` uses
+      `npx -y tsx` (works under `npm ci --omit=dev`); env.ts loads `.env` from
+      both the app root and `../` (systemd/Passenger launch from the root).
+- [x] `docs/deploy.md`: shared-Node-host (cPanel/Passenger) and VPS
+      (systemd + Nginx + certbot) paths, migrations/seed steps, update flow,
+      backup crons, production checklist, single-instance warning.
+- [x] `deploy/`: env.production.example, auction-app.service (systemd),
+      nginx.conf.example (WebSocket upgrade, proxy headers).
+- [x] Verified by actually deploying the zip to a clean dir: `npm ci
+      --omit=dev` → migrate deploy (all migrations) → seed → production boot →
+      health (DB ping), SPA, admin login, Socket.io polling handshake all OK.
+
 ## Later
-- Phase 10 — Deploy (PM2/systemd config, deploy docs, backup story).
+- (none — all phases complete; next: real-world deploy + backups on the host)
